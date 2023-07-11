@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"unicode"
 
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
@@ -81,17 +80,29 @@ func (c *RtspContext) String() string {
 	return strings.Join(strs[:], "")
 }
 
+// const (
+// 	MsgFieldType_UserAgent = iota
+// 	MsgFieldType_Authorization
+// 	MsgFieldType_Accept
+// 	MsgFieldType_Public
+// 	MsgFieldType_ContentBase
+// 	MsgFieldType_ContentType
+// 	MsgFieldType_Range
+// 	MsgFieldType_Session
+// 	MsgEifldType_CSeq
+// )
+
 // general messages
 const (
-	MsgField_UserAgent     = "User-Agent"
-	MsgField_Authorization = "Authorization"
-	MsgField_Accept        = "Accept"
-	MsgField_Public        = "Public"
-	MsgField_ContentBase   = "Content-Base"
-	MsgField_ContentType   = "Content-type"
-	MsgField_Range         = "Range"
-	MsgField_Session       = "Session"
-	MsgField_CSeq          = "CSeq"
+	MsgField_UserAgent     = "user-agent"
+	MsgField_Authorization = "authorization"
+	MsgField_Accept        = "accept"
+	MsgField_Public        = "public"
+	MsgField_ContentBase   = "content-base"
+	MsgField_ContentType   = "content-type"
+	MsgField_Range         = "range"
+	MsgField_Session       = "session"
+	MsgField_CSeq          = "cseq"
 
 	ContentType_SDP = "application/sdp"
 )
@@ -154,61 +165,4 @@ func parseMessage(option string) (key, val string, err error) {
 	val = strings.Trim(option[index+1:], " \r\n")
 
 	return
-}
-
-func getKeyAndValue(text string) (key, val string, err error) {
-	index := strings.Index(text, "=")
-	if index < 0 || index >= len(text) {
-		err = errors.New("invalid key and value string")
-		return
-	}
-
-	key = text[0:index]
-	if !isLetter(key) {
-		err = errors.New("key is not letter")
-		return
-	}
-	val = strings.Trim(text[index+1:], " ")
-	return
-}
-
-func isLetter(s string) bool {
-	for _, r := range s {
-		if !unicode.IsLetter(r) {
-			return false
-		}
-	}
-	return true
-}
-
-func getKeyAndValueSet(s string) (kvset map[string]string, err error) {
-	texts := strings.Split(s, ",")
-	if len(texts) > 0 {
-		kvset = make(map[string]string)
-	}
-	for _, text := range texts {
-		if key, val, er := getKeyAndValue(strings.Trim(text, " ")); nil == er {
-			kvset[key] = val
-		} else {
-			err = er
-			return
-		}
-	}
-
-	return
-}
-
-func splitBytesToString(data []byte) ([]string, []string) {
-	str := string(data)
-	bodies := strings.Split(str, "\r\n\r\n")
-	if len(bodies) < 1 {
-		return nil, nil
-	} else if len(bodies) == 1 {
-		strs := strings.Split(str, "\r\n")
-		return strs, nil
-	} else if len(bodies) >= 2 {
-		return strings.Split(bodies[0], "\r\n"), strings.Split(bodies[1], "\r\n")
-	}
-
-	return nil, nil
 }

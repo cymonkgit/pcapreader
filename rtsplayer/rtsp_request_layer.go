@@ -14,8 +14,9 @@ import (
 type RequestMethodType int
 
 // definitions of RTSP request method types
+const RequestMethodType_Unknown = -1
+
 const (
-	// RequestMethodType_Unknown  = -1
 	RequestMethodType_Describe = 0 + iota
 	RequestMethodType_Announce
 	RequestMethodType_GetParameter
@@ -27,7 +28,6 @@ const (
 	RequestMethodType_Setup
 	RequestMethodType_SetParameter
 	RequestMethodType_Teardown
-	RequestMethodType_Unknown
 )
 
 // definitions of RTSP request method types
@@ -99,7 +99,7 @@ type RtspRequestLayer struct {
 	Uri      string            // RTSP uri
 	Version  string            // RTSP version
 	CSeq     int               // CSeq
-	Options  map[string]string // RTSP packet general options
+	Messages map[string]string // RTSP packet general messages
 	rtspBody []byte
 }
 
@@ -189,7 +189,7 @@ func probeOptions(mapId, serverAddress, clientAddress string, req *RtspRequestLa
 			ServerAddress: serverAddress,
 			Url:           req.Uri,
 		}
-		if val, ok := req.Options[MsgField_UserAgent]; ok {
+		if val, ok := req.Messages[MsgField_UserAgent]; ok {
 			(*contexts)[mapId].UserAgent = val
 		}
 		return nil
@@ -214,7 +214,7 @@ func parseAuthorization(auth string) (digest DigestAuthorization, err error) {
 	}
 	_auth = _auth[index+1:]
 
-	if kvset, er := getKeyAndValueSet(_auth); nil != er {
+	if kvset, er := util.GetKeyAndValueSet(_auth); nil != er {
 		err = er
 		return
 	} else {
@@ -240,14 +240,14 @@ func parseAuthorization(auth string) (digest DigestAuthorization, err error) {
 // probeDescribe function
 func probeDescribe(mapId string, req *RtspRequestLayer, contexts *RtspContextMap) error {
 	if context, ok := (*contexts)[mapId]; ok {
-		if v, ok := req.Options[MsgField_Authorization]; ok {
+		if v, ok := req.Messages[MsgField_Authorization]; ok {
 			auth, err := parseAuthorization(v)
 			if nil != err {
 				return err
 			}
 			context.Auth = &auth
 		}
-		if v, ok := req.Options[MsgField_Accept]; ok {
+		if v, ok := req.Messages[MsgField_Accept]; ok {
 			context.Accept = v
 		}
 	} else {
@@ -292,7 +292,17 @@ func decodeRtspRequest(data []byte, p gopacket.PacketBuilder) error {
 // parseRequest function check is lower layer's payload is RTSP request or not.
 func parseRequest(data []byte) (req *RtspRequestLayer) {
 	var method string
-	lines, _ := splitBytesToString(data)
+	indices := util.SplitByteIndices(data, "\r\n\r\n")
+
+	if len(indices) < 1 {
+		return nil
+	}
+
+	var body []byte
+	body = data[:indices[0]]
+	bodyStr := string(body)
+
+	lines := strings.Split(bodyStr, "\r\n")
 	if len(lines) < 1 {
 		return nil
 	}
@@ -323,10 +333,11 @@ func parseRequest(data []byte) (req *RtspRequestLayer) {
 	version := reqs[2]
 
 	request := RtspRequestLayer{
-		Method:  method,
-		Uri:     uri,
-		Version: version,
-		Options: make(map[string]string),
+		Method:   method,
+		Uri:      uri,
+		Version:  version,
+		Messages: make(map[string]string),
+		rtspBody: body,
 	}
 
 	for idx, line := range lines {
@@ -336,11 +347,11 @@ func parseRequest(data []byte) (req *RtspRequestLayer) {
 		if k, v, e := parseMessage(line); nil != e {
 			continue
 		} else {
-			switch k {
-			case "CSeq":
+			switch strings.ToLower(k) {
+			case MsgField_CSeq:
 				request.CSeq, _ = strconv.Atoi(v)
 			}
-			request.Options[k] = v
+			request.Messages[strings.ToLower(k)] = v
 		}
 	}
 

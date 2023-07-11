@@ -107,7 +107,7 @@ func processRequest(packet gopacket.Packet, ethPacket *layers.Ethernet, ipPacket
 	fmt.Println("tcp payload:", hex.EncodeToString(req.LayerContents()))
 
 	fmt.Println("Method:", req.Method, ", Uri:", req.Uri, ", Version:", req.Version, ", CSeq:", req.CSeq)
-	for key, option := range req.Options {
+	for key, option := range req.Messages {
 		fmt.Println("  option: name=", key, ", value=", option)
 	}
 }

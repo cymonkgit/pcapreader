@@ -3,6 +3,8 @@ package rtsplayer
 import (
 	"fmt"
 	"testing"
+
+	"github.com/cymonkgit/pcapreader/util"
 )
 
 func Test_ParseOptions(t *testing.T) {
@@ -27,4 +29,10 @@ func Test_ParseOptions(t *testing.T) {
 	}
 
 	fmt.Println(digest)
+}
+
+func TestSplitByte(t *testing.T) {
+	src := "1ststring\r\n\r\n2ndstring\r\n\r\n"
+	indices := util.SplitBytes([]byte(src), "\r\n\r\n")
+	fmt.Println(indices)
 }

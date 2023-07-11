@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/cymonkgit/pcapreader/sdplayer"
 	"github.com/cymonkgit/pcapreader/util"
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
@@ -109,9 +110,25 @@ func ProbeResponse(packet *gopacket.Packet, ethPacket *layers.Ethernet, ipLayer 
 
 	if context.lastReqMethod == RequestMethodType_Describe && nil != context.Auth {
 		context.Auth.Authorized = res.Status >= 200 && res.Status < 300
+
+		if context.Auth.Authorized {
+
+		}
 	}
 
 	return nil
+}
+
+func (l RtspResponseLayer) GetMessageValue(_key string) string {
+	key := strings.ToLower(_key)
+	if nil == l.Messages {
+		return ""
+	}
+
+	if val, ok := l.Messages[key]; ok {
+		return val
+	}
+	return ""
 }
 
 // LayerType함수. gopacket.Layer interface의 implementation. 패킷의 LayerType을 반환
@@ -126,12 +143,17 @@ func (l RtspResponseLayer) LayerContents() []byte {
 
 // LayerPayload함수. gopacket.Layer interface의 implementation. 패킷 payload byte 데이터를 반환.
 func (l RtspResponseLayer) LayerPayload() []byte {
-	return l.body
+	return l.trailer
 }
 
-// LayerPayload함수. gopacket.Layer interface의 implementation. 다음 레이어 분석을 위한 나머지 byte 데이터를 반환.
-func (l RtspResponseLayer) RestOfData() []byte {
-	return l.trailer
+func (l RtspResponseLayer) NextLayerType() gopacket.LayerType {
+	if len(l.trailer) > 0 {
+		if l.GetMessageValue(MsgField_ContentType) == "application/sdp" {
+			return sdplayer.SdpLayerType
+		}
+	}
+
+	return gopacket.LayerTypePayload
 }
 
 // decodeRtspRequest 함수. rtsp request 에 해당하는 데이터인지를 판별한다.
@@ -144,17 +166,29 @@ func decodeRtspResponse(data []byte, p gopacket.PacketBuilder) error {
 	// AddLayer appends to the list of layers that the packet has
 	p.AddLayer(res)
 
-	return p.NextDecoder(gopacket.LayerTypePayload)
+	return p.NextDecoder(res.NextLayerType())
 }
 
 func parseResponse(data []byte) *RtspResponseLayer {
-	lines, lines2 := splitBytesToString(data)
-	if len(lines) < 1 {
+	indices := util.SplitByteIndices(data, "\r\n\r\n")
+
+	if len(indices) < 1 {
 		return nil
 	}
 
-	if len(lines2) < 1 {
+	var body, trailer []byte
+	body = data[:indices[0]]
+	if len(indices) >= 2 {
+		trailer = data[indices[0]+4 : indices[1]]
+	} else {
+		trailer = data[indices[0]+4:]
+	}
 
+	bodyStr := string(body)
+
+	lines := strings.Split(bodyStr, "\r\n")
+	if len(lines) < 1 {
+		return nil
 	}
 
 	// first line : response
@@ -172,6 +206,8 @@ func parseResponse(data []byte) *RtspResponseLayer {
 		Version: strs[0],
 		Status:  code,
 		Reason:  strs[2],
+		body:    body,
+		trailer: trailer,
 	}
 
 	for idx, line := range lines {
@@ -181,14 +217,14 @@ func parseResponse(data []byte) *RtspResponseLayer {
 		if k, v, e := parseMessage(line); nil != e {
 			continue
 		} else {
-			switch k {
+			switch strings.ToLower(k) {
 			case MsgField_CSeq:
 				res.CSeq, _ = strconv.Atoi(v)
 			}
 			if nil == res.Messages {
 				res.Messages = make(map[string]string)
 			}
-			res.Messages[k] = v
+			res.Messages[strings.ToLower(k)] = v
 		}
 	}
 
