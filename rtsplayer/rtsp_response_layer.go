@@ -105,6 +105,9 @@ func ProbeResponse(packet *gopacket.Packet, ethPacket *layers.Ethernet, ipLayer 
 		case MsgField_Public:
 			val := res.Messages[fieldName]
 			context.SupportedMethod = getPublics(val)
+		case MsgField_Transport:
+			val := res.Messages[fieldName]
+			context.
 		}
 	}
 
@@ -231,6 +234,7 @@ func parseResponse(data []byte) *RtspResponseLayer {
 	return &res
 }
 
+// getPublics retrieve public supported methods of server from Message with 'Public'
 func getPublics(public string) []RequestMethodType {
 	ret := make([]RequestMethodType, 0)
 	methods := strings.Split(public, ",")
@@ -238,4 +242,12 @@ func getPublics(public string) []RequestMethodType {
 		ret = append(ret, getMethodType(strings.Trim(method, " ")))
 	}
 	return ret
+}
+
+// getTrasportOption retrieve trasport options from 'Transport' message
+func getTrasportOption(transport string) {
+	strs := strings.Split(transport, ":")
+	ty := strs[0]
+	target := strs[1]
+	dest
 }

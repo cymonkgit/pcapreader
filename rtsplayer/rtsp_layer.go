@@ -103,6 +103,7 @@ const (
 	MsgField_Range         = "range"
 	MsgField_Session       = "session"
 	MsgField_CSeq          = "cseq"
+	MsgField_Transport     = "transport"
 
 	ContentType_SDP = "application/sdp"
 )
@@ -165,4 +166,15 @@ func parseMessage(option string) (key, val string, err error) {
 	val = strings.Trim(option[index+1:], " \r\n")
 
 	return
+}
+
+func DemuxRtsp(fileName string, ctx RtspContext) error {
+	// Open up the pcap file for reading
+	handle, err := pcap.OpenOffline(fileName)
+	if err != nil {
+		return err
+	}
+	defer handle.Close()
+
+	return nil
 }

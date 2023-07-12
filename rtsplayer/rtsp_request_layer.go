@@ -278,7 +278,7 @@ func (l RtspRequestLayer) RestOfData() []byte {
 
 // decodeRtspRequest function check is lower layer's payload is RTSP request or not.
 func decodeRtspRequest(data []byte, p gopacket.PacketBuilder) error {
-	req := parseRequest(data)
+	req := ParseRequest(data)
 	if nil == req {
 		return errors.New("not rtsp request")
 	}
@@ -289,8 +289,8 @@ func decodeRtspRequest(data []byte, p gopacket.PacketBuilder) error {
 	return p.NextDecoder(gopacket.LayerTypePayload)
 }
 
-// parseRequest function check is lower layer's payload is RTSP request or not.
-func parseRequest(data []byte) (req *RtspRequestLayer) {
+// ParseRequest function check is lower layer's payload is RTSP request or not.
+func ParseRequest(data []byte) (req *RtspRequestLayer) {
 	var method string
 	indices := util.SplitByteIndices(data, "\r\n\r\n")
 
