@@ -105,18 +105,44 @@ func ProbeResponse(packet *gopacket.Packet, ethPacket *layers.Ethernet, ipLayer 
 		case MsgField_Public:
 			val := res.Messages[fieldName]
 			context.SupportedMethod = getPublics(val)
+		case MsgField_Session:
+			val := res.Messages[fieldName]
+			if sessionId, timeoutSec, err := getSession(val); nil != err {
+				if nil != err {
+					// todo : log error here
+					continue
+				}
+			} else {
+				context.SessionId, _ = strconv.Atoi(sessionId)
+				context.SessionTimeoutSec, _ = strconv.Atoi(timeoutSec)
+			}
 		case MsgField_Transport:
 			val := res.Messages[fieldName]
-			context.
+			if _, _, lowerTransport, unicast, parameters, err := getTrasportOption(val); nil != err {
+				// todo : log error here
+				continue
+			} else {
+				if lowerTransport == "" || lowerTransport == "UDP" {
+					context.Protocol = TransferProtocol_UDP
+				} else if lowerTransport == "TCP" {
+					context.Protocol = TransferProtocol_TCP
+				}
+				context.Unicast = unicast
+				if v, ok := parameters["client_port"]; ok {
+					context.CilenttPort = v
+				}
+				if v, ok := parameters["server_port"]; ok {
+					context.ServerPort = v
+				}
+				if v, ok := parameters["SSRC"]; ok {
+					context.SSRC = v
+				}
+			}
 		}
 	}
 
 	if context.lastReqMethod == RequestMethodType_Describe && nil != context.Auth {
 		context.Auth.Authorized = res.Status >= 200 && res.Status < 300
-
-		if context.Auth.Authorized {
-
-		}
 	}
 
 	return nil
@@ -244,10 +270,63 @@ func getPublics(public string) []RequestMethodType {
 	return ret
 }
 
+func getSession(session string) (sessionId, timeoutSec string, err error) {
+	strs := strings.Split(session, ";")
+	if len(strs) < 1 {
+		err = errors.New("invalid session values")
+		return
+	}
+	sessionId = strings.Trim(strs[0], " ")
+	if len(strs) > 1 {
+		k, v, e := util.GetKeyAndValue(strings.Trim(strs[1], " "))
+		if nil != e {
+			err = e
+			return
+		}
+		if k != "timeout" {
+			err = errors.New("invalid session values")
+			return
+		}
+		timeoutSec = v
+	}
+
+	return
+}
+
 // getTrasportOption retrieve trasport options from 'Transport' message
-func getTrasportOption(transport string) {
-	strs := strings.Split(transport, ":")
-	ty := strs[0]
-	target := strs[1]
-	dest
+func getTrasportOption(transport string) (protocol, profile, lowerTransport string, unicast bool, parameters map[string]string, err error) {
+	// Transport: RTP/AVP;unicast;destination=172.168.11.33;source=172.168.11.148;client_port=49276-49277;server_port=13068-13069;ssrc=6EFF3234;mode="PLAY"
+	strs := strings.Split(transport, ";")
+	if len(strs) < 2 {
+		err = errors.New("invalid transport values")
+		return
+	}
+	spec := strings.Split(strings.Trim(strs[0], " "), "/")
+	if len(spec) < 2 {
+		err = errors.New("invalid transport values")
+		return
+	}
+	protocol = spec[0]
+	profile = spec[1]
+	if len(spec) > 2 {
+		lowerTransport = spec[2]
+	}
+
+	if strs[1] == "unicast" {
+		unicast = true
+	} else {
+		unicast = false
+	}
+
+	parameters = make(map[string]string)
+	for _, kv := range strs[2:] {
+		k, v, e := util.GetKeyAndValue(strings.Trim(kv, " "))
+		if nil != e {
+			err = e
+			return
+		}
+		parameters[k] = v
+	}
+
+	return
 }

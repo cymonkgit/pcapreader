@@ -4,7 +4,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/cymonkgit/pcapreader/util"
+	"github.com/google/gopacket"
+	"github.com/google/gopacket/pcap"
 )
 
 func Test_ParseOptions(t *testing.T) {
@@ -31,8 +32,25 @@ func Test_ParseOptions(t *testing.T) {
 	fmt.Println(digest)
 }
 
-func TestSplitByte(t *testing.T) {
-	src := "1ststring\r\n\r\n2ndstring\r\n\r\n"
-	indices := util.SplitBytes([]byte(src), "\r\n\r\n")
-	fmt.Println(indices)
+// filter test
+func Test_Filter(t *testing.T) {
+	fileName := "C:/temp/1098-packet.pcapng"
+	handle, err := pcap.OpenOffline(fileName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer handle.Close()
+
+	// err = handle.SetBPFFilter("src host 172.168.11.33 || src host 172.168.11.148")
+	// err = handle.SetBPFFilter("(tcp src host 172.168.11.148 && tcp src port 554) || (dst host 172.168.11.148 && dst port 554)")
+	err = handle.SetBPFFilter("(tcp && src host 172.168.11.148 && src port 554) || (tcp && dst host 172.168.11.148 && dst port 554)")
+	if nil != err {
+		t.Fatal(err)
+	}
+
+	packetSource := gopacket.NewPacketSource(handle, handle.LinkType())
+	for packet := range packetSource.Packets() {
+		fmt.Println(packet)
+	}
+
 }

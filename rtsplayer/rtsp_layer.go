@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
@@ -14,8 +15,8 @@ import (
 type TransferType int
 
 const (
-	TransferType_UDP = iota
-	TransferType_TCP
+	TransferProtocol_UDP = iota
+	TransferProtocol_TCP
 )
 
 type DigestAuthorization struct {
@@ -36,18 +37,57 @@ type RtspContext struct {
 	SupportedMethod   []RequestMethodType  // from OPTIONS
 	Auth              *DigestAuthorization // from DESCRIBE
 	Accept            string               // from DESCRIBE
-	TransferType      TransferType         // from SETUP
-	SessionId         int32                // from SETUP request
+	Protocol          TransferType         // from SETUP
+	Unicast           bool                 // from SETUP
+	SessionId         int                  // from SETUP request
 	SessionTimeoutSec int                  // from SETUP request
-	UdpServerPort     string               // from SETUP request
-	UdpCilenttPort    string               // from SETUP request
+	ServerPort        string               // from SETUP request
+	CilenttPort       string               // from SETUP request
 	SSRC              string               // SSID. from SETUP reply
 
-	lastReqMethod RequestMethodType
-	lastReqCSeq   int
+	lastReqMethod        RequestMethodType
+	lastReqCSeq          int
+	firstRtspPacketIndex int
+	firstRtpPacketIndex  int
 }
 
 type RtspContextMap map[string]*RtspContext
+
+func (c *RtspContext) GetBPFFilter() (filter string, err error) {
+	// TCP
+	if c.Protocol == TransferProtocol_TCP {
+		// e.g "(src host 172.168.11.148 && src port 554) || (dst host 172.168.11.148 && dst port 554)"
+		ip, port, er := GetIpPort(c.ServerAddress)
+		if nil != er {
+			err = er
+			return
+		}
+		filter = fmt.Sprintf("(tcp && src host %v && src port %v) || (tcp && dst host %v && dst port %v)", ip, port, ip, port)
+		return
+	} else if c.Protocol == TransferProtocol_UDP {
+		serverIp, rtspPort, er := GetIpPort(c.ServerAddress)
+		if nil != er {
+			err = er
+			return
+		}
+		clientIp, _, er := GetIpPort(c.ClientAddress)
+		if nil != er {
+			err = er
+			return
+		}
+		clientPorts := strings.Split(c.CilenttPort, "-")
+		if len(clientPorts) != 2 {
+			err = errors.New("invalid rtp receive port range value")
+			return
+		}
+		filter = fmt.Sprintf("(tcp && src host %v && src port %v) || (tcp && dst host %v && dst port %v) || (udp && dst %v && portrange %v-%v)",
+			serverIp, rtspPort, serverIp, rtspPort, clientIp, clientPorts[0], clientPorts[1])
+		return
+	} else {
+		err = errors.New("invalid RTSP protocol type")
+		return
+	}
+}
 
 func (c *RtspContext) String() string {
 	getSupported := func(SupportedMethod []RequestMethodType) (support string) {
@@ -66,7 +106,7 @@ func (c *RtspContext) String() string {
 		fmt.Sprintln("user agent:", c.UserAgent),
 		fmt.Sprintln("supported:", getSupported(c.SupportedMethod)),
 		fmt.Sprintln("accept:", c.Accept),
-		fmt.Sprintln("transfer type:", c.TransferType),
+		fmt.Sprintln("transfer type:", c.Protocol),
 		fmt.Sprintln("session id:", c.SessionId),
 		fmt.Sprintln("session timeout:", c.SessionTimeoutSec),
 		fmt.Sprintln("ssrc:", c.SSRC),
@@ -112,6 +152,19 @@ func getAddress(ip, port string) string {
 	return ip + ":" + port
 }
 
+func GetIpPort(addr string) (ip, port string, err error) {
+	strs := strings.Split(addr, ":")
+	if len(strs) != 2 {
+		err = errors.New("invalid address")
+		return
+	}
+
+	ip = strs[0]
+	port = strings.ReplaceAll(strs[1], "(rtsp)", "")
+
+	return
+}
+
 func getRtspContextId(serverIp, serverPort, clientIp, clientPort string) string {
 	return getAddress(serverIp, serverPort) + "-" + getAddress(clientIp, clientPort)
 }
@@ -124,7 +177,7 @@ func Probe(fileName string) (*RtspContextMap, error) {
 	}
 	defer handle.Close()
 
-	rtspCtxMap := make(RtspContextMap, 0)
+	rtspCtxMap := make(RtspContextMap)
 
 	// Loop through packets in file
 	packetSource := gopacket.NewPacketSource(handle, handle.LinkType())
@@ -168,6 +221,12 @@ func parseMessage(option string) (key, val string, err error) {
 	return
 }
 
+type BytePacket struct {
+	Index   int
+	Payload []byte
+	Delay   time.Duration
+}
+
 func DemuxRtsp(fileName string, ctx RtspContext) error {
 	// Open up the pcap file for reading
 	handle, err := pcap.OpenOffline(fileName)
@@ -175,6 +234,19 @@ func DemuxRtsp(fileName string, ctx RtspContext) error {
 		return err
 	}
 	defer handle.Close()
+
+	// set BPF filter
+	bpfFilter, err := ctx.GetBPFFilter()
+	if nil != err {
+		return err
+	}
+	err = handle.SetBPFFilter(bpfFilter)
+	if nil != err {
+		return err
+	}
+
+	// ctx.ClientAddress
+	// handle.SetBPFFilter()
 
 	return nil
 }

@@ -289,27 +289,11 @@ func decodeRtspRequest(data []byte, p gopacket.PacketBuilder) error {
 	return p.NextDecoder(gopacket.LayerTypePayload)
 }
 
-// ParseRequest function check is lower layer's payload is RTSP request or not.
-func ParseRequest(data []byte) (req *RtspRequestLayer) {
-	var method string
-	indices := util.SplitByteIndices(data, "\r\n\r\n")
-
-	if len(indices) < 1 {
-		return nil
-	}
-
-	var body []byte
-	body = data[:indices[0]]
-	bodyStr := string(body)
-
-	lines := strings.Split(bodyStr, "\r\n")
-	if len(lines) < 1 {
-		return nil
-	}
-
-	reqs := strings.Split(lines[0], " ")
+func ParseRequestInfo(s string) (method, uri, version string, err error) {
+	reqs := strings.Split(s, " ")
 	if len(reqs) < 3 {
-		return nil
+		err = errors.New("invalid request")
+		return
 	}
 
 	switch reqs[0] {
@@ -326,11 +310,37 @@ func ParseRequest(data []byte) (req *RtspRequestLayer) {
 	case "TEARDOWN":
 		method = reqs[0]
 	default:
+		err = errors.New("invalid request method " + method)
+		return
+	}
+
+	uri = reqs[1]
+	version = reqs[2]
+
+	return
+}
+
+// ParseRequest function check is lower layer's payload is RTSP request or not.
+func ParseRequest(data []byte) (req *RtspRequestLayer) {
+	var method string
+	indices := util.SplitByteIndices(data, "\r\n\r\n")
+
+	if len(indices) < 1 {
 		return nil
 	}
 
-	uri := reqs[1]
-	version := reqs[2]
+	body := data[:indices[0]]
+	bodyStr := string(body)
+
+	lines := strings.Split(bodyStr, "\r\n")
+	if len(lines) < 1 {
+		return nil
+	}
+
+	method, uri, version, err := ParseRequestInfo(lines[0])
+	if nil != err {
+		return
+	}
 
 	request := RtspRequestLayer{
 		Method:   method,

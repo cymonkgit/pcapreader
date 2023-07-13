@@ -44,7 +44,7 @@ func GetKeyAndValue(text string) (key, val string, err error) {
 
 func IsAlphanumeric(s string) bool {
 	for _, r := range s {
-		if !unicode.IsLetter(r) && !unicode.IsNumber(r) {
+		if !unicode.IsLetter(r) && !unicode.IsNumber(r) && r != '_' && r != '-' {
 			return false
 		}
 	}
