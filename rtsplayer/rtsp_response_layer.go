@@ -351,20 +351,26 @@ type KeyAndVlue struct {
 	Value string
 }
 
+type ResponseData struct {
+	StatusCode int
+	CSeq       int
+	Messages   []KeyAndVlue
+}
+
 // BuildResponse make RTSP response packet data payload with status code, CSeq and rest of messages (key: value)
-func BuildResponse(status, cseq int, messages []KeyAndVlue) ([]byte, error) {
-	msg := GetRtspStatusMsg(status)
+func BuildResponse(res ResponseData) ([]byte, error) {
+	msg := GetRtspStatusMsg(res.StatusCode)
 	if len(msg) < 1 {
 		return nil, errors.New("invalid status code")
 	}
 
 	lines := make([]string, 0)
 	// response status
-	lines = append(lines, fmt.Sprintf("%v %v %v", "RTSP/1.0", strconv.Itoa(status), msg))
-	lines = append(lines, fmt.Sprintf("CSeq: %v", cseq))
+	lines = append(lines, fmt.Sprintf("%v %v %v", "RTSP/1.0", strconv.Itoa(res.StatusCode), msg))
+	lines = append(lines, fmt.Sprintf("CSeq: %v", res.CSeq))
 
-	if nil != messages {
-		for _, knv := range messages {
+	if nil != res.Messages {
+		for _, knv := range res.Messages {
 			lines = append(lines, fmt.Sprintf("%v: %v", knv.Key, knv.Value))
 		}
 	}
