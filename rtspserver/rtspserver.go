@@ -238,6 +238,13 @@ func (s *Server) DoRtsp(conn net.Conn, rtspCtx *rtsplayer.RtspContext) {
 			fmt.Println("context done")
 			break
 		case req := <-requestChannel:
+			if res, err := s.dispatchRequest(req, client, rtspCtx); nil != err {
+				fmt.Println("failed to dispatch request. err:", err.Error())
+			} else if nil != res {
+				if _, err := conn.Write(res); nil != err {
+					fmt.Println("failed to send response to client. err:", err.Error())
+				}
+			}
 			fmt.Println(req)
 		case ip := <-InterleavedChannel:
 			if rtspCtx.Protocol == rtsplayer.TransferProtocol_TCP {
@@ -393,7 +400,7 @@ func (s *Server) readRequest(stopReadRequest *bool, reader *bufio.Reader, conn *
 			log.Printf("rtsp ReadRequest exit")
 			break
 		}
-		req, err := ReadRequestWithTimeout(reader, conn, 500*time.Millisecond)
+		req, err := readRequestWithTimeout(reader, conn, 500*time.Millisecond)
 		if err != nil {
 			if err.Error() != "EOF" && !strings.Contains(err.Error(), "i/o timeout") {
 				(*cancel)()
@@ -413,7 +420,64 @@ func (s *Server) readRequest(stopReadRequest *bool, reader *bufio.Reader, conn *
 	}
 }
 
-func ReadRequestWithTimeout(b *bufio.Reader, conn *net.Conn, duration time.Duration) (req *rtsplayer.RtspRequestLayer, err error) {
+func (s *Server) dispatchRequest(req *rtsplayer.RtspRequestLayer, client *RtspClient, rtspContext *rtsplayer.RtspContext) (response []byte, err error) {
+	switch req.Method {
+	case rtsplayer.RequestMethod_Options:
+		return s.doOptions(req, client, rtspContext)
+	case rtsplayer.RequestMethod_Describe:
+		return s.doDescribe(req, client, rtspContext)
+	case rtsplayer.RequestMethod_Setup:
+		return s.doSetup(req, client, rtspContext)
+	case rtsplayer.RequestMethod_Play:
+		return s.doPlay(req, client, rtspContext)
+	case rtsplayer.RequestMethod_Pause:
+		return s.doOptions(req, client, rtspContext)
+	}
+
+	return nil, errors.New("invalid request method")
+}
+
+func (s *Server) doOptions(req *rtsplayer.RtspRequestLayer, client *RtspClient, rtspContext *rtsplayer.RtspContext) (response []byte, err error) {
+	messages := make([]rtsplayer.KeyAndVlue, 0)
+	// Public : from rtspContext
+	supported := ""
+	for i, method := range rtspContext.SupportedMethod {
+		supported += rtsplayer.GetMethodTypeText(method)
+		if i != len(rtspContext.SupportedMethod)-1 {
+			supported += ", "
+		}
+	}
+
+	if len(supported) > 0 {
+		messages = append(messages, rtsplayer.KeyAndVlue{Key: "Public", Value: supported})
+	}
+
+	response, err = rtsplayer.BuildResponse(rtsplayer.OK, req.CSeq, messages)
+	return
+}
+
+func (s *Server) doDescribe(req *rtsplayer.RtspRequestLayer, client *RtspClient, rtspContext *rtsplayer.RtspContext) (response []byte, err error) {
+	if nil != rtspContext.Auth {
+
+	}
+	return nil, nil
+}
+
+func (s *Server) doSetup(req *rtsplayer.RtspRequestLayer, client *RtspClient, rtspContext *rtsplayer.RtspContext) (response []byte, err error) {
+	return nil, nil
+}
+
+func (s *Server) doPlay(req *rtsplayer.RtspRequestLayer, client *RtspClient, rtspContext *rtsplayer.RtspContext) (response []byte, err error) {
+	return nil, nil
+}
+
+func (s *Server) doPause(req *rtsplayer.RtspRequestLayer, client *RtspClient, rtspContext *rtsplayer.RtspContext) (response []byte, err error) {
+	return nil, nil
+}
+
+// readRequestWithTimeout read textprotocol packets from net.Conn and bufio. duration is timeout for peek from net.Conn
+func readRequestWithTimeout(b *bufio.Reader, conn *net.Conn, duration time.Duration) (req *rtsplayer.RtspRequestLayer, err error) {
+	// peek first line (end with '\r\n') and wait until timeout reached
 	for {
 		(*conn).SetReadDeadline(time.Now().Add(duration))
 		peek, er := b.Peek(4)
@@ -421,6 +485,7 @@ func ReadRequestWithTimeout(b *bufio.Reader, conn *net.Conn, duration time.Durat
 			return nil, er
 		}
 
+		// skip rtcp request
 		if isrtcp, rtcpLen := IsRtcpRequest(peek); isrtcp && rtcpLen > 0 {
 			// consume RTCP bytes
 			b.Discard(rtcpLen)
@@ -434,15 +499,14 @@ func ReadRequestWithTimeout(b *bufio.Reader, conn *net.Conn, duration time.Durat
 	}
 
 	tp := newTextprotoReader(b)
-	// req = new(Request)
-	// First line: GET /index.html HTTP/1.0
+	// read first line (end with '\r\n')
 	var s string
 	if s, err = tp.ReadLine(); err != nil {
 		return nil, err
 	}
 
 	defer func() {
-		putTextprotoReader(tp)
+		tp.R = nil // remove textproto reader
 		if err == io.EOF {
 			err = io.ErrUnexpectedEOF
 		}
@@ -452,6 +516,7 @@ func ReadRequestWithTimeout(b *bufio.Reader, conn *net.Conn, duration time.Durat
 	lines := make([]string, 1)
 	lines[0] = s
 
+	// read rest of lines until receive '\r\n\r\n'
 	for {
 		s, e := tp.ReadContinuedLine()
 		if nil != e {
@@ -460,12 +525,14 @@ func ReadRequestWithTimeout(b *bufio.Reader, conn *net.Conn, duration time.Durat
 		lines = append(lines, s)
 	}
 
-	body := strings.Join(lines, "\r\n") + "\r\n"
+	// rebuild packet to parse request with rtsplayer packet parser
+	body := strings.Join(lines, "\r\n") + "\r\n\r\n"
+	// for debugging . todo : remove
 	fmt.Println("----------------------")
 	fmt.Print(body)
 	fmt.Println("----------------------")
 
-	req = rtsplayer.ParseRequest([]byte(s))
+	req = rtsplayer.ParseRequest([]byte(body))
 	if nil == req {
 		return nil, errors.New("malformed RTSP request")
 	}
@@ -473,20 +540,10 @@ func ReadRequestWithTimeout(b *bufio.Reader, conn *net.Conn, duration time.Durat
 	return
 }
 
-var textprotoReaderPool sync.Pool
+// var textprotoReaderPool sync.Pool
 
 func newTextprotoReader(br *bufio.Reader) *textproto.Reader {
-	if v := textprotoReaderPool.Get(); v != nil {
-		tr := v.(*textproto.Reader)
-		tr.R = br
-		return tr
-	}
 	return textproto.NewReader(br)
-}
-
-func putTextprotoReader(r *textproto.Reader) {
-	r.R = nil
-	textprotoReaderPool.Put(r)
 }
 
 // RTP/AVP/TCP Transmission Method

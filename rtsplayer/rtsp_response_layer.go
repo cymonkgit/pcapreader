@@ -2,6 +2,7 @@ package rtsplayer
 
 import (
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -143,6 +144,16 @@ func ProbeResponse(packet *gopacket.Packet, ethPacket *layers.Ethernet, ipLayer 
 
 	if context.lastReqMethod == RequestMethodType_Describe && nil != context.Auth {
 		context.Auth.Authorized = res.Status >= 200 && res.Status < 300
+		if context.Auth.Authorized {
+			fmt.Println("Authorized")
+		}
+	}
+
+	sdpLayer := resPacket.Layer(util.LayerType_Sdp)
+	if nil != sdpLayer {
+		if sdp, ok := sdpLayer.(*sdplayer.SessionLayer); ok {
+			context.SDP = sdp.LayerContents()
+		}
 	}
 
 	return nil
@@ -195,6 +206,10 @@ func decodeRtspResponse(data []byte, p gopacket.PacketBuilder) error {
 	// AddLayer appends to the list of layers that the packet has
 	p.AddLayer(res)
 
+	// todo : optionize for debug
+	// if nil != res.trailer && len(res.trailer) > 0 {
+	// 	fmt.Println("")
+	// }
 	return p.NextDecoder(res.NextLayerType())
 }
 
@@ -209,7 +224,7 @@ func parseResponse(data []byte) *RtspResponseLayer {
 	body = data[:indices[0]]
 	if len(indices) >= 2 {
 		trailer = data[indices[0]+4 : indices[1]]
-	} else {
+	} else { // if len(data)+4 < len(data) {
 		trailer = data[indices[0]+4:]
 	}
 
@@ -329,4 +344,27 @@ func getTrasportOption(transport string) (protocol, profile, lowerTransport stri
 	}
 
 	return
+}
+
+type KeyAndVlue struct {
+	Key   string
+	Value string
+}
+
+// BuildResponse make RTSP response packet data payload with status code, CSeq and rest of messages (key: value)
+func BuildResponse(status, cseq int, messages []KeyAndVlue) ([]byte, error) {
+	msg := GetRtspStatusMsg(status)
+	if len(msg) < 1 {
+		return nil, errors.New("invalid status code")
+	}
+
+	lines := make([]string, 1)
+	// response status
+	lines[1] = fmt.Sprintln("RTSP/1.0", strconv.Itoa(status), msg)
+
+	for _, knv := range messages {
+		lines = append(lines, fmt.Sprintln(knv.Key+":", knv.Value))
+	}
+
+	return buildTextProtoPacket(lines), nil
 }

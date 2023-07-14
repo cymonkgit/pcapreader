@@ -19,6 +19,118 @@ const (
 	TransferProtocol_TCP
 )
 
+const (
+	Continue                      = 100
+	OK                            = 200
+	Created                       = 201
+	LowOnStorageSpace             = 250
+	MultipleChoices               = 300
+	MovedPermanently              = 301
+	MovedTemporarily              = 302
+	SeeOther                      = 303
+	UseProxy                      = 305
+	BadRequest                    = 400
+	Unauthorized                  = 401
+	PaymentRequired               = 402
+	Forbidden                     = 403
+	NotFound                      = 404
+	MethodNotAllowed              = 405
+	NotAcceptable                 = 406
+	ProxyAuthenticationRequired   = 407
+	RequestTimeout                = 408
+	Gone                          = 410
+	LengthRequired                = 411
+	PreconditionFailed            = 412
+	RequestEntityTooLarge         = 413
+	RequestURITooLong             = 414
+	UnsupportedMediaType          = 415
+	Invalidparameter              = 451
+	IllegalConferenceIdentifier   = 452
+	NotEnoughBandwidth            = 453
+	SessionNotFound               = 454
+	MethodNotValidInThisState     = 455
+	HeaderFieldNotValid           = 456
+	InvalidRange                  = 457
+	ParameterIsReadOnly           = 458
+	AggregateOperationNotAllowed  = 459
+	OnlyAggregateOperationAllowed = 460
+	UnsupportedTransport          = 461
+	DestinationUnreachable        = 462
+	InternalServerError           = 500
+	NotImplemented                = 501
+	BadGateway                    = 502
+	ServiceUnavailable            = 503
+	GatewayTimeout                = 504
+	RTSPVersionNotSupported       = 505
+	OptionNotsupport              = 551
+)
+
+var (
+	rtspStatus map[int]string = map[int]string{
+		Continue:                      "Continue",
+		OK:                            "OK",
+		Created:                       "Created",
+		LowOnStorageSpace:             "LowOnStorageSpace",
+		MultipleChoices:               "MultipleChoices",
+		MovedPermanently:              "MovedPermanently",
+		MovedTemporarily:              "MovedTemporarily",
+		SeeOther:                      "SeeOther",
+		UseProxy:                      "UseProxy",
+		BadRequest:                    "BadRequest",
+		Unauthorized:                  "Unauthorized",
+		PaymentRequired:               "PaymentRequired",
+		Forbidden:                     "Forbidden",
+		NotFound:                      "NotFound",
+		MethodNotAllowed:              "MethodNotAllowed",
+		NotAcceptable:                 "NotAcceptable",
+		ProxyAuthenticationRequired:   "ProxyAuthenticationRequired",
+		RequestTimeout:                "RequestTimeout",
+		Gone:                          "Gone",
+		LengthRequired:                "LengthRequired",
+		PreconditionFailed:            "PreconditionFailed",
+		RequestEntityTooLarge:         "RequestEntityTooLarge",
+		RequestURITooLong:             "RequestURITooLong",
+		UnsupportedMediaType:          "UnsupportedMediaType",
+		Invalidparameter:              "Invalidparameter",
+		IllegalConferenceIdentifier:   "IllegalConferenceIdentifier",
+		NotEnoughBandwidth:            "NotEnoughBandwidth",
+		SessionNotFound:               "SessionNotFound",
+		MethodNotValidInThisState:     "MethodNotValidInThisState",
+		HeaderFieldNotValid:           "HeaderFieldNotValid",
+		InvalidRange:                  "InvalidRange",
+		ParameterIsReadOnly:           "ParameterIsReadOnly",
+		AggregateOperationNotAllowed:  "AggregateOperationNotAllowed",
+		OnlyAggregateOperationAllowed: "OnlyAggregateOperationAllowed",
+		UnsupportedTransport:          "UnsupportedTransport",
+		DestinationUnreachable:        "DestinationUnreachable",
+		InternalServerError:           "InternalServerError",
+		NotImplemented:                "NotImplemented",
+		BadGateway:                    "BadGateway",
+		ServiceUnavailable:            "ServiceUnavailable",
+		GatewayTimeout:                "GatewayTimeout",
+		RTSPVersionNotSupported:       "RTSPVersionNotSupported",
+		OptionNotsupport:              "OptionNotsupport",
+	}
+)
+
+func GetRtspStatusMsg(statusCode int) string {
+	if msg, ok := rtspStatus[statusCode]; ok {
+		return msg
+	} else {
+		return ""
+	}
+}
+
+func GetRtspStatusCode(msg string) int {
+	for code := range rtspStatus {
+		if _msg, ok := rtspStatus[code]; ok && _msg == msg {
+			return code
+		}
+	}
+
+	return -1
+}
+
 type DigestAuthorization struct {
 	User     string
 	Realm    string
@@ -29,6 +141,7 @@ type DigestAuthorization struct {
 	Authorized bool
 }
 
+// RtspContext is context of 1 RTSP client-server communication
 type RtspContext struct {
 	ClientAddress     string               // from ethernet/ip packet layer
 	ServerAddress     string               // from ethernet/ip packet layer
@@ -44,7 +157,12 @@ type RtspContext struct {
 	ServerPort        string               // from SETUP request
 	CilenttPort       string               // from SETUP request
 	SSRC              string               // SSID. from SETUP reply
+	SDP               []byte               // SDP, from DESCRIBE response
 
+	//  user options
+	SkipAuthorization bool
+
+	// internal
 	lastReqMethod        RequestMethodType
 	lastReqCSeq          int
 	firstRtspPacketIndex int
@@ -95,7 +213,7 @@ func (c *RtspContext) String() string {
 			if i != 0 {
 				support += ", "
 			}
-			support += getMethodTypeText(method)
+			support += GetMethodTypeText(method)
 		}
 		return
 	}
@@ -249,4 +367,10 @@ func DemuxRtsp(fileName string, ctx RtspContext) error {
 	// handle.SetBPFFilter()
 
 	return nil
+}
+
+// buildTextProtoPacket make textprotocol lines to packet data (HTML...). each lines ended with '\r\n' and packet ends with '\r\n\r\n'
+func buildTextProtoPacket(lines []string) []byte {
+	ret := strings.Join(lines, "\r\n") + "\r\n\r\n"
+	return []byte(ret)
 }

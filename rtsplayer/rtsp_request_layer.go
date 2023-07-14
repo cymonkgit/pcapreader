@@ -85,7 +85,8 @@ func getMethodType(method string) RequestMethodType {
 	return RequestMethodType_Unknown
 }
 
-func getMethodTypeText(t RequestMethodType) string {
+// GetMethodTypeText retrieve supported method type text of method type
+func GetMethodTypeText(t RequestMethodType) string {
 	if int(t) >= 0 && int(t) <= len(methods)-1 {
 		return methods[t]
 	}

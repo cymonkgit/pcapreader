@@ -190,13 +190,8 @@ func decodeSdp(data []byte, p gopacket.PacketBuilder) error {
 		return errors.New("not rtsp request")
 	}
 
-	// req := parseRequest(data)
-	// if nil == req {
-	// 	return errors.New("not rtsp request")
-	// }
-
 	// AddLayer appends to the list of layers that the packet has
-	// p.AddLayer(req)
+	p.AddLayer(req)
 
 	return p.NextDecoder(gopacket.LayerTypePayload)
 }
