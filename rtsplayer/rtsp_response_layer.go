@@ -361,6 +361,7 @@ func BuildResponse(status, cseq int, messages []KeyAndVlue) ([]byte, error) {
 	lines := make([]string, 0)
 	// response status
 	lines = append(lines, fmt.Sprintf("%v %v %v", "RTSP/1.0", strconv.Itoa(status), msg))
+	lines = append(lines, fmt.Sprintf("CSeq: %v", cseq))
 
 	if nil != messages {
 		for _, knv := range messages {
