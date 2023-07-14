@@ -391,7 +391,7 @@ func (s *Server) readRequest(stopReadRequest *bool, reader *bufio.Reader, conn *
 		r := recover()
 		if nil != r {
 			debug.PrintStack()
-			log.Printf("readRequest recovered:", r)
+			log.Println("readRequest recovered:", r)
 		}
 	}()
 
@@ -404,7 +404,7 @@ func (s *Server) readRequest(stopReadRequest *bool, reader *bufio.Reader, conn *
 		if err != nil {
 			if err.Error() != "EOF" && !strings.Contains(err.Error(), "i/o timeout") {
 				(*cancel)()
-				log.Printf("read request error. err:", err.Error())
+				log.Println("read request error. err:", err.Error())
 				return
 			} else {
 				// log.Debugln(logTag, "read request EOF")

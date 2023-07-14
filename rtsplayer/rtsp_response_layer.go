@@ -358,12 +358,12 @@ func BuildResponse(status, cseq int, messages []KeyAndVlue) ([]byte, error) {
 		return nil, errors.New("invalid status code")
 	}
 
-	lines := make([]string, 1)
+	lines := make([]string, 0)
 	// response status
-	lines[1] = fmt.Sprintln("RTSP/1.0", strconv.Itoa(status), msg)
+	lines = append(lines, fmt.Sprintf("%v %v %v", "RTSP/1.0", strconv.Itoa(status), msg))
 
 	for _, knv := range messages {
-		lines = append(lines, fmt.Sprintln(knv.Key+":", knv.Value))
+		lines = append(lines, fmt.Sprintf("%v: %v", knv.Key, knv.Value))
 	}
 
 	return buildTextProtoPacket(lines), nil
