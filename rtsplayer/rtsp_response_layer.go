@@ -362,8 +362,10 @@ func BuildResponse(status, cseq int, messages []KeyAndVlue) ([]byte, error) {
 	// response status
 	lines = append(lines, fmt.Sprintf("%v %v %v", "RTSP/1.0", strconv.Itoa(status), msg))
 
-	for _, knv := range messages {
-		lines = append(lines, fmt.Sprintf("%v: %v", knv.Key, knv.Value))
+	if nil != messages {
+		for _, knv := range messages {
+			lines = append(lines, fmt.Sprintf("%v: %v", knv.Key, knv.Value))
+		}
 	}
 
 	return buildTextProtoPacket(lines), nil
