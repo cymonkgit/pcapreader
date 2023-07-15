@@ -190,7 +190,7 @@ func probeOptions(mapId, serverAddress, clientAddress string, req *RtspRequestLa
 			ServerAddress: serverAddress,
 			Url:           req.Uri,
 		}
-		if val, ok := req.Messages[MsgField_UserAgent]; ok {
+		if val := req.GetMessageValueByType(MsgFieldType_UserAgent); len(val) > 0 {
 			(*contexts)[mapId].UserAgent = val
 		}
 		return nil
@@ -199,57 +199,18 @@ func probeOptions(mapId, serverAddress, clientAddress string, req *RtspRequestLa
 	}
 }
 
-func parseAuthorization(auth string) (digest DigestAuthorization, err error) {
-	// Authorization: Digest username="guest", realm="RealHUB Streaming Server", nonce="c6bcddac12782de4b0b1f357e3932f37", uri="rtsp://172.168.11.148:554/UkVDLTEwOTgtueYtvvbBpA==", response="f3ec885c099e83b80c47773353d2c29c"\r\n
-	_auth := strings.Trim(auth, " ")
-	index := strings.Index(_auth, " ")
-	if index < 0 || index >= len(_auth) {
-		err = errors.New("failed to get authorization type")
-		return
-	}
-
-	authType := _auth[:index]
-	if authType != "Digest" {
-		err = errors.New("unsupported authorization type")
-		return
-	}
-	_auth = _auth[index+1:]
-
-	if kvset, er := util.GetKeyAndValueSet(_auth); nil != er {
-		err = er
-		return
-	} else {
-		for key := range kvset {
-			switch key {
-			case "username":
-				digest.User = strings.Trim(kvset[key], "\"")
-			case "realm":
-				digest.Realm = strings.Trim(kvset[key], "\"")
-			case "nonce":
-				digest.Nonce = strings.Trim(kvset[key], "\"")
-			case "uri":
-				digest.Uri = strings.Trim(kvset[key], "\"")
-			case "response":
-				digest.Response = strings.Trim(kvset[key], "\"")
-			}
-		}
-	}
-
-	return
-}
-
 // probeDescribe function
 func probeDescribe(mapId string, req *RtspRequestLayer, contexts *RtspContextMap) error {
 	if context, ok := (*contexts)[mapId]; ok {
-		if v, ok := req.Messages[MsgField_Authorization]; ok {
-			auth, err := parseAuthorization(v)
+		if val := req.GetMessageValueByType(MsgFieldType_Authorization); len(val) > 0 {
+			auth, err := parseAuthorization(val)
 			if nil != err {
 				return err
 			}
 			context.Auth = &auth
 		}
-		if v, ok := req.Messages[MsgField_Accept]; ok {
-			context.Accept = v
+		if val := req.GetMessageValueByType(MsgFieldType_Accept); len(val) > 0 {
+			context.Accept = val
 		}
 	} else {
 		return errors.New("OPTIONS not processed")
@@ -275,6 +236,17 @@ func (l RtspRequestLayer) LayerPayload() []byte {
 // RestOfData function implements gopacket.Layer.RestOfData() interface function
 func (l RtspRequestLayer) RestOfData() []byte {
 	return nil
+}
+
+// RestOfData function retrieves message value of specific message type
+func (l RtspRequestLayer) GetMessageValueByType(msgType int) string {
+	for k := range l.Messages {
+		if msgType > UnknownType && GetMessageFieldType(k) == msgType {
+			return l.Messages[k]
+		}
+	}
+
+	return ""
 }
 
 // decodeRtspRequest function check is lower layer's payload is RTSP request or not.
@@ -358,8 +330,8 @@ func ParseRequest(data []byte) (req *RtspRequestLayer) {
 		if k, v, e := parseMessage(line); nil != e {
 			continue
 		} else {
-			switch strings.ToLower(k) {
-			case MsgField_CSeq:
+			switch GetMessageFieldType(k) {
+			case MsgFieldType_CSeq:
 				request.CSeq, _ = strconv.Atoi(v)
 			}
 			request.Messages[strings.ToLower(k)] = v

@@ -3,9 +3,11 @@ package rtsplayer
 import (
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"time"
 
+	"github.com/cymonkgit/pcapreader/util"
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
 	"github.com/google/gopacket/pcap"
@@ -137,8 +139,59 @@ type DigestAuthorization struct {
 	Nonce    string
 	Uri      string
 	Response string
+}
 
-	Authorized bool
+// Check functions authorize disgest authority of request auth values
+func (da *DigestAuthorization) Check(auth string) bool {
+	if a, err := parseAuthorization(auth); nil != err {
+		return false
+	} else {
+		return reflect.DeepEqual(*da, a)
+	}
+}
+
+// WWW-Authenticate: Digest realm="RealHUB Streaming Server", nonce="c6bcddac12782de4b0b1f357e3932f37"\r\n
+func (da *DigestAuthorization) GetAuthResponseVaue() string {
+	return fmt.Sprintf("Digest realm=\"%v\", nonce=\"%v\"", da.Realm, da.Nonce)
+}
+
+// parseAuthorization parse authorization from request messages
+func parseAuthorization(auth string) (digest DigestAuthorization, err error) {
+	_auth := strings.Trim(auth, " ")
+	index := strings.Index(_auth, " ")
+	if index < 0 || index >= len(_auth) {
+		err = errors.New("failed to get authorization type")
+		return
+	}
+
+	authType := _auth[:index]
+	if authType != "Digest" {
+		err = errors.New("unsupported authorization type")
+		return
+	}
+	_auth = _auth[index+1:]
+
+	if kvset, er := util.GetKeyAndValueSet(_auth); nil != er {
+		err = er
+		return
+	} else {
+		for key := range kvset {
+			switch key {
+			case "username":
+				digest.User = strings.Trim(kvset[key], "\"")
+			case "realm":
+				digest.Realm = strings.Trim(kvset[key], "\"")
+			case "nonce":
+				digest.Nonce = strings.Trim(kvset[key], "\"")
+			case "uri":
+				digest.Uri = strings.Trim(kvset[key], "\"")
+			case "response":
+				digest.Response = strings.Trim(kvset[key], "\"")
+			}
+		}
+	}
+
+	return
 }
 
 // RtspContext is context of 1 RTSP client-server communication
@@ -149,6 +202,7 @@ type RtspContext struct {
 	UserAgent         string               // from OPTIONS, DESCRIBE ...
 	SupportedMethod   []RequestMethodType  // from OPTIONS
 	Auth              *DigestAuthorization // from DESCRIBE
+	Authorized        bool                 // from Auth
 	Accept            string               // from DESCRIBE
 	Protocol          TransferType         // from SETUP
 	Unicast           bool                 // from SETUP
@@ -230,7 +284,7 @@ func (c *RtspContext) String() string {
 		fmt.Sprintln("ssrc:", c.SSRC),
 	}
 	if nil != c.Auth {
-		strs = append(strs, fmt.Sprintf("authority: authorized(%v), username(%v), realm(%v) ...", c.Auth.Authorized, c.Auth.User, c.Auth.Realm))
+		strs = append(strs, fmt.Sprintf("authority: authorized(%v), username(%v), realm(%v) ...", c.Authorized, c.Auth.User, c.Auth.Realm))
 	} else {
 		strs = append(strs, fmt.Sprintln("authority: not use"))
 	}
@@ -238,33 +292,78 @@ func (c *RtspContext) String() string {
 	return strings.Join(strs[:], "")
 }
 
-// const (
-// 	MsgFieldType_UserAgent = iota
-// 	MsgFieldType_Authorization
-// 	MsgFieldType_Accept
-// 	MsgFieldType_Public
-// 	MsgFieldType_ContentBase
-// 	MsgFieldType_ContentType
-// 	MsgFieldType_Range
-// 	MsgFieldType_Session
-// 	MsgEifldType_CSeq
-// )
-
 // general messages
+const UnknownType = -1
+
 const (
-	MsgField_UserAgent     = "user-agent"
-	MsgField_Authorization = "authorization"
-	MsgField_Accept        = "accept"
-	MsgField_Public        = "public"
-	MsgField_ContentBase   = "content-base"
-	MsgField_ContentType   = "content-type"
-	MsgField_Range         = "range"
-	MsgField_Session       = "session"
-	MsgField_CSeq          = "cseq"
-	MsgField_Transport     = "transport"
+	MsgField_UserAgent        = "User-Agent"
+	MsgField_Authorization    = "Authorization"
+	MsgField_Accept           = "Accept"
+	MsgField_Public           = "Public"
+	MsgField_ContentBase      = "Content-Base"
+	MsgField_ContentType      = "Content-Type"
+	MsgField_ContentLength    = "Content-Length"
+	MsgField_Range            = "Range"
+	MsgField_Session          = "Session"
+	MsgField_CSeq             = "CSeq"
+	MsgField_Transport        = "Transport"
+	MsgField_WWW_Authenticate = "WWW-Authenticate"
 
 	ContentType_SDP = "application/sdp"
+
+	Unknown_Text = "Unknown"
 )
+
+const (
+	MsgFieldType_UserAgent = iota
+	MsgFieldType_Authorization
+	MsgFieldType_Accept
+	MsgFieldType_Public
+	MsgFieldType_ContentBase
+	MsgFieldType_ContentType
+	MsgFieldType_ContentLength
+	MsgFieldType_Range
+	MsgFieldType_Session
+	MsgFieldType_CSeq
+	MsgFieldType_Transport
+	MsgFieldType_Authenticate
+)
+
+var (
+	msgFields = map[int]string{
+		MsgFieldType_UserAgent:     MsgField_UserAgent,
+		MsgFieldType_Authorization: MsgField_Authorization,
+		MsgFieldType_Accept:        MsgField_Accept,
+		MsgFieldType_Public:        MsgField_Public,
+		MsgFieldType_ContentBase:   MsgField_ContentBase,
+		MsgFieldType_ContentType:   MsgField_ContentType,
+		MsgFieldType_ContentLength: MsgField_ContentLength,
+		MsgFieldType_Range:         MsgField_Range,
+		MsgFieldType_Session:       MsgField_Session,
+		MsgFieldType_CSeq:          MsgField_CSeq,
+		MsgFieldType_Transport:     MsgField_Transport,
+		MsgFieldType_Authenticate:  MsgField_WWW_Authenticate,
+	}
+)
+
+// GetMessageFieldText
+func GetMessageFieldText(typ int) string {
+	if val, ok := msgFields[typ]; ok {
+		return val
+	}
+	return Unknown_Text
+}
+
+// GetMessageFieldType
+func GetMessageFieldType(text string) int {
+	for typ := range msgFields {
+		if strings.EqualFold(text, msgFields[typ]) {
+			return typ
+		}
+	}
+
+	return UnknownType
+}
 
 func getAddress(ip, port string) string {
 	return ip + ":" + port

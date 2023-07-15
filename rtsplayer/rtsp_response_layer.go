@@ -102,11 +102,11 @@ func ProbeResponse(packet *gopacket.Packet, ethPacket *layers.Ethernet, ipLayer 
 	}
 
 	for fieldName := range res.Messages {
-		switch fieldName {
-		case MsgField_Public:
+		switch GetMessageFieldType(fieldName) {
+		case MsgFieldType_Public:
 			val := res.Messages[fieldName]
 			context.SupportedMethod = getPublics(val)
-		case MsgField_Session:
+		case MsgFieldType_Session:
 			val := res.Messages[fieldName]
 			if sessionId, timeoutSec, err := getSession(val); nil != err {
 				if nil != err {
@@ -117,7 +117,7 @@ func ProbeResponse(packet *gopacket.Packet, ethPacket *layers.Ethernet, ipLayer 
 				context.SessionId, _ = strconv.Atoi(sessionId)
 				context.SessionTimeoutSec, _ = strconv.Atoi(timeoutSec)
 			}
-		case MsgField_Transport:
+		case MsgFieldType_Transport:
 			val := res.Messages[fieldName]
 			if _, _, lowerTransport, unicast, parameters, err := getTrasportOption(val); nil != err {
 				// todo : log error here
@@ -143,8 +143,8 @@ func ProbeResponse(packet *gopacket.Packet, ethPacket *layers.Ethernet, ipLayer 
 	}
 
 	if context.lastReqMethod == RequestMethodType_Describe && nil != context.Auth {
-		context.Auth.Authorized = res.Status >= 200 && res.Status < 300
-		if context.Auth.Authorized {
+		context.Authorized = res.Status >= 200 && res.Status < 300
+		if context.Authorized {
 			fmt.Println("Authorized")
 		}
 	}
@@ -159,7 +159,7 @@ func ProbeResponse(packet *gopacket.Packet, ethPacket *layers.Ethernet, ipLayer 
 	return nil
 }
 
-func (l RtspResponseLayer) GetMessageValue(_key string) string {
+func (l RtspResponseLayer) GetMessageValueByName(_key string) string {
 	key := strings.ToLower(_key)
 	if nil == l.Messages {
 		return ""
@@ -188,7 +188,7 @@ func (l RtspResponseLayer) LayerPayload() []byte {
 
 func (l RtspResponseLayer) NextLayerType() gopacket.LayerType {
 	if len(l.trailer) > 0 {
-		if l.GetMessageValue(MsgField_ContentType) == "application/sdp" {
+		if l.GetMessageValueByName(MsgField_ContentType) == ContentType_SDP {
 			return sdplayer.SdpLayerType
 		}
 	}
@@ -262,7 +262,7 @@ func parseResponse(data []byte) *RtspResponseLayer {
 			continue
 		} else {
 			switch strings.ToLower(k) {
-			case MsgField_CSeq:
+			case strings.ToLower(MsgField_CSeq):
 				res.CSeq, _ = strconv.Atoi(v)
 			}
 			if nil == res.Messages {
@@ -355,6 +355,7 @@ type ResponseData struct {
 	StatusCode int
 	CSeq       int
 	Messages   []KeyAndVlue
+	Appendent  []byte
 }
 
 // BuildResponse make RTSP response packet data payload with status code, CSeq and rest of messages (key: value)
@@ -375,5 +376,12 @@ func BuildResponse(res ResponseData) ([]byte, error) {
 		}
 	}
 
-	return buildTextProtoPacket(lines), nil
+	if nil == res.Appendent || len(res.Appendent) < 1 {
+		return buildTextProtoPacket(lines), nil
+	} else {
+		pp := buildTextProtoPacket(lines)
+		pp = append(pp, res.Appendent...)
+
+		return pp, nil
+	}
 }
