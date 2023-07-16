@@ -119,13 +119,13 @@ func ProbeResponse(packet *gopacket.Packet, ethPacket *layers.Ethernet, ipLayer 
 			}
 		case MsgFieldType_Transport:
 			val := res.Messages[fieldName]
-			if _, _, lowerTransport, unicast, parameters, err := getTrasportOption(val); nil != err {
+			if _, _, lowerTransport, unicast, parameters, err := GetTrasportOption(val); nil != err {
 				// todo : log error here
 				continue
 			} else {
-				if lowerTransport == "" || lowerTransport == "UDP" {
+				if lowerTransport == "" || lowerTransport == TransportLowerProfile_UDP {
 					context.Protocol = TransferProtocol_UDP
-				} else if lowerTransport == "TCP" {
+				} else if lowerTransport == TransportLowerProfile_TCP {
 					context.Protocol = TransferProtocol_TCP
 				}
 				context.Unicast = unicast
@@ -308,8 +308,8 @@ func getSession(session string) (sessionId, timeoutSec string, err error) {
 	return
 }
 
-// getTrasportOption retrieve trasport options from 'Transport' message
-func getTrasportOption(transport string) (protocol, profile, lowerTransport string, unicast bool, parameters map[string]string, err error) {
+// GetTrasportOption retrieve trasport options from 'Transport' message
+func GetTrasportOption(transport string) (protocol, profile, lowerTransport string, unicast bool, parameters map[string]string, err error) {
 	// Transport: RTP/AVP;unicast;destination=172.168.11.33;source=172.168.11.148;client_port=49276-49277;server_port=13068-13069;ssrc=6EFF3234;mode="PLAY"
 	strs := strings.Split(transport, ";")
 	if len(strs) < 2 {

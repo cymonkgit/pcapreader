@@ -312,6 +312,11 @@ const (
 	ContentType_SDP = "application/sdp"
 
 	Unknown_Text = "Unknown"
+
+	TransportProtocol_RTP     = "RTP"
+	TransportProfile_AVP      = "AVP"
+	TransportLowerProfile_TCP = "TCP"
+	TransportLowerProfile_UDP = "UDP"
 )
 
 const (
