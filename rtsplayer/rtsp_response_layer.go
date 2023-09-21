@@ -36,7 +36,7 @@ type RtspResponseLayer struct {
 }
 
 // NewRtspResponsePacket function. RTSP Response 에 해당하는 패킷인지 판별하여 패킷을 생성한다.
-// RTSP Response packet이 아닌 경우 nil을 반환한다.
+// returns RTSP Response packet이 아닌 경우 nil을 반환한다.
 func NewRtspResponsePacket(data []byte) gopacket.Packet {
 	return gopacket.NewPacket(
 		data,
@@ -130,7 +130,7 @@ func ProbeResponse(packet *gopacket.Packet, ethPacket *layers.Ethernet, ipLayer 
 				}
 				context.Unicast = unicast
 				if v, ok := parameters["client_port"]; ok {
-					context.CilenttPort = v
+					context.CilentPort = v
 				}
 				if v, ok := parameters["server_port"]; ok {
 					context.ServerPort = v
@@ -196,11 +196,11 @@ func (l RtspResponseLayer) NextLayerType() gopacket.LayerType {
 	return gopacket.LayerTypePayload
 }
 
-// decodeRtspRequest 함수. rtsp request 에 해당하는 데이터인지를 판별한다.
+// decodeRtspResponse 함수. rtsp response 에 해당하는 데이터인지를 판별한다.
 func decodeRtspResponse(data []byte, p gopacket.PacketBuilder) error {
 	res := parseResponse(data)
 	if nil == res {
-		return errors.New("not rtsp request")
+		return errors.New("not rtsp response")
 	}
 
 	// AddLayer appends to the list of layers that the packet has

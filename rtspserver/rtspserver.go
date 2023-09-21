@@ -10,8 +10,10 @@ import (
 	"log"
 	"net"
 	"net/textproto"
+	"net/url"
 	"os"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -26,6 +28,9 @@ type UDPPair struct {
 	Port    int
 }
 
+// key : rtsp context key, value : rtsp path
+type RtspSources map[string]string
+
 type Server struct {
 	Sessions *sync.Map
 	UdpPair  *UDPPair
@@ -34,22 +39,29 @@ type Server struct {
 
 	Started bool
 
-	// Started    fmp4.TAtomBool
-	// TlsStarted fmp4.TAtomBool
-
 	SessionTimeout time.Duration
-	// cron           *cron.Cron
 
 	RtspUser string
 	RtspPwd  string
 }
 
+// rtsp server configuration
+type ServerConfig struct {
+	TimeOutSecond int
+}
+
 type RtspClient struct {
-	Sock       *net.Conn
-	Server     *Server
-	PeerIp     net.Addr
-	Uri        string
-	Authorized bool
+	Sock        *net.Conn
+	Server      *Server
+	PeerIp      net.Addr
+	Uri         string
+	Authorized  bool
+	UserAgent   string
+	RtpOverUdp  bool
+	Profile     string
+	LowProfile  string
+	Unicast     bool
+	ClientPorts [2]int
 
 	CreateTime        time.Time
 	ConnectedTime     time.Time
@@ -108,6 +120,10 @@ func init() {
 
 func StartServer(rtspCtx *rtsplayer.RtspContext, quit *chan os.Signal) {
 	go func() {
+		defer func() {
+			*quit <- nil
+		}()
+
 		if err := rtspServer.Start(rtspCtx); err != nil {
 			fmt.Println("start RTSP server error:", err)
 		}
@@ -145,6 +161,7 @@ func (s *Server) Start(rtspCtx *rtsplayer.RtspContext) error {
 
 	log.Println("[rtspserver] start on port ", rtspPort)
 
+	// accept connect routine
 	for {
 		conn, err := l.Accept()
 		if nil != err {
@@ -172,16 +189,16 @@ func (s *Server) DeleteSession(key string) {
 
 func (s *Server) DoRtsp(conn net.Conn, rtspCtx *rtsplayer.RtspContext) {
 	peerIp := conn.RemoteAddr()
-	logTag := fmt.Sprintf("[rtspserver][%v]", peerIp)
+	logTag := fmt.Sprintf("[rtspserver][%v][%v]", peerIp, rtspCtx.Url)
 	defer func() {
 		r := recover()
 		if nil != r {
 			debug.PrintStack()
-			log.Printf("[rtspserver]", logTag, " connhander recovered:", r)
+			fmt.Printf("[rtspserver] %v DoRtsp recovered %v\n", logTag, r)
 		}
 	}()
 
-	log.Printf("%v rtsp connection request from %v", logTag, peerIp)
+	fmt.Printf("%v rtsp connection request from %v\n", logTag, peerIp)
 	var client *RtspClient
 
 	client = &RtspClient{
@@ -199,7 +216,7 @@ func (s *Server) DoRtsp(conn net.Conn, rtspCtx *rtsplayer.RtspContext) {
 		s.RtspClients.Delete(conn)
 		// log.Infoln(logTag, "rtsp client of", client.MediaId, client.PeerIp.String(), "removed")
 		conn.Close()
-		log.Printf(logTag, "rtsp connection closed (defer)")
+		log.Println(logTag, "rtsp connection closed (defer)")
 	}()
 
 	// set connection
@@ -232,19 +249,26 @@ func (s *Server) DoRtsp(conn net.Conn, rtspCtx *rtsplayer.RtspContext) {
 	}()
 
 	sendCnt := 0
+LOOP:
 	for {
 		select {
 		case <-ctx.Done():
 			fmt.Println("context done")
-			break
+			break LOOP
 		case req := <-requestChannel:
 			if res, err := s.dispatchRequest(req, client, rtspCtx); nil != err {
 				fmt.Println("failed to dispatch request. err:", err.Error())
+				// send 500 internal
+				res, _ = rtsplayer.BuildResponse(rtsplayer.ResponseData{StatusCode: rtsplayer.InternalServerError, CSeq: req.CSeq})
+				if _, err := conn.Write(res); nil != err {
+					fmt.Println("failed to send response to client. err:", err.Error())
+				}
 			} else if nil != res {
 				if _, err := conn.Write(res); nil != err {
 					fmt.Println("failed to send response to client. err:", err.Error())
 				}
 			}
+			// todo : remove
 			fmt.Println(req)
 		case ip := <-InterleavedChannel:
 			if rtspCtx.Protocol == rtsplayer.TransferProtocol_TCP {
@@ -421,6 +445,8 @@ func (s *Server) readRequest(stopReadRequest *bool, reader *bufio.Reader, conn *
 }
 
 func (s *Server) dispatchRequest(req *rtsplayer.RtspRequestLayer, client *RtspClient, rtspContext *rtsplayer.RtspContext) (response []byte, err error) {
+	fmt.Println("request received.", req.Method)
+
 	switch req.Method {
 	case rtsplayer.RequestMethod_Options:
 		return s.doOptions(req, client, rtspContext)
@@ -431,14 +457,49 @@ func (s *Server) dispatchRequest(req *rtsplayer.RtspRequestLayer, client *RtspCl
 	case rtsplayer.RequestMethod_Play:
 		return s.doPlay(req, client, rtspContext)
 	case rtsplayer.RequestMethod_Pause:
-		return s.doOptions(req, client, rtspContext)
+		return s.doPause(req, client, rtspContext)
 	}
 
 	return nil, errors.New("invalid request method")
 }
 
+// checkPath check request's uri and rtspContext's uri
+func checkPath(req *rtsplayer.RtspRequestLayer, rtspContext *rtsplayer.RtspContext) (rd *rtsplayer.ResponseData) {
+
+	u, er := url.Parse(req.Uri)
+	if nil != er {
+		rd = &rtsplayer.ResponseData{StatusCode: rtsplayer.BadRequest, CSeq: req.CSeq}
+		return
+	}
+
+	u2, er := url.Parse(rtspContext.Url)
+	if nil != er {
+		rd = &rtsplayer.ResponseData{StatusCode: rtsplayer.NotFound, CSeq: req.CSeq}
+	}
+
+	if u.Path != u2.Path {
+		rd = &rtsplayer.ResponseData{StatusCode: rtsplayer.NotFound, CSeq: req.CSeq}
+	}
+
+	return
+}
+
+// doOptions 'OPTIONS' request handler
 func (s *Server) doOptions(req *rtsplayer.RtspRequestLayer, client *RtspClient, rtspContext *rtsplayer.RtspContext) (response []byte, err error) {
+	if rd := checkPath(req, rtspContext); nil != rd {
+		response, err = rtsplayer.BuildResponse(*rd)
+		if nil == err {
+			fmt.Printf("rtsp response for %v build. code:%v\n", req.Method, rtsplayer.NotFound)
+		} else {
+			response, err = rtsplayer.BuildResponse(rtsplayer.ResponseData{StatusCode: 500, CSeq: req.CSeq})
+		}
+		return
+	}
+
+	client.Uri = req.Uri
+
 	messages := make([]rtsplayer.KeyAndVlue, 0)
+
 	// Public : from rtspContext
 	supported := ""
 	for i, method := range rtspContext.SupportedMethod {
@@ -452,22 +513,190 @@ func (s *Server) doOptions(req *rtsplayer.RtspRequestLayer, client *RtspClient, 
 		messages = append(messages, rtsplayer.KeyAndVlue{Key: "Public", Value: supported})
 	}
 
-	response, err = rtsplayer.BuildResponse(rtsplayer.OK, req.CSeq, messages)
+	response, err = rtsplayer.BuildResponse(rtsplayer.ResponseData{StatusCode: rtsplayer.OK, CSeq: req.CSeq, Messages: messages})
 	return
 }
 
-func (s *Server) doDescribe(req *rtsplayer.RtspRequestLayer, client *RtspClient, rtspContext *rtsplayer.RtspContext) (response []byte, err error) {
-	if nil != rtspContext.Auth {
-
+func checkAuthority(req *rtsplayer.RtspRequestLayer, rtspContext *rtsplayer.RtspContext) bool {
+	authorized := false
+	if nil != rtspContext.Auth && !rtspContext.SkipAuthorization {
+		if auth := req.GetMessageValueByType(rtsplayer.MsgFieldType_Authorization); len(auth) > 0 {
+			if rtspContext.Auth.Check(auth) {
+				authorized = true
+			}
+		}
+	} else if nil == rtspContext.Auth || rtspContext.SkipAuthorization {
+		authorized = true
 	}
-	return nil, nil
+
+	return authorized
 }
 
+func doUnauthorized(req *rtsplayer.RtspRequestLayer, rtspContext *rtsplayer.RtspContext) (response []byte, err error) {
+	rd := rtsplayer.ResponseData{
+		StatusCode: rtsplayer.Unauthorized,
+		CSeq:       req.CSeq,
+		Messages: []rtsplayer.KeyAndVlue{
+			{
+				Key:   rtsplayer.GetMessageFieldText(rtsplayer.MsgFieldType_Authenticate),
+				Value: rtspContext.Auth.GetAuthResponseVaue(),
+			},
+		},
+	}
+	response, err = rtsplayer.BuildResponse(rd)
+	return
+}
+
+// doOptions 'DESCRIBE' request handler
+func (s *Server) doDescribe(req *rtsplayer.RtspRequestLayer, client *RtspClient, rtspContext *rtsplayer.RtspContext) (response []byte, err error) {
+	authorized := checkAuthority(req, rtspContext)
+	if !authorized {
+		return doUnauthorized(req, rtspContext)
+	}
+
+	var knv []rtsplayer.KeyAndVlue
+	if !rtspContext.SkipAuthorization && nil != rtspContext.Auth {
+		knv = []rtsplayer.KeyAndVlue{
+			{
+				Key:   rtsplayer.GetMessageFieldText(rtsplayer.MsgFieldType_Authenticate),
+				Value: rtspContext.Auth.GetAuthResponseVaue(),
+			},
+		}
+	}
+
+	knv = append(knv, []rtsplayer.KeyAndVlue{
+		{
+			Key:   rtsplayer.GetMessageFieldText(rtsplayer.MsgFieldType_ContentBase),
+			Value: req.Uri,
+		},
+		{
+			Key:   rtsplayer.GetMessageFieldText(rtsplayer.MsgFieldType_ContentType),
+			Value: rtsplayer.ContentType_SDP,
+		},
+		{
+			Key:   rtsplayer.GetMessageFieldText(rtsplayer.MsgFieldType_ContentLength),
+			Value: strconv.Itoa(len(rtspContext.SDP)),
+		},
+	}...)
+
+	rd := rtsplayer.ResponseData{
+		StatusCode: rtsplayer.OK,
+		CSeq:       req.CSeq,
+		Messages:   knv,
+		Appendent:  rtspContext.SDP,
+	}
+	response, err = rtsplayer.BuildResponse(rd)
+	return
+}
+
+// doSetup 'SETUP' request handler
 func (s *Server) doSetup(req *rtsplayer.RtspRequestLayer, client *RtspClient, rtspContext *rtsplayer.RtspContext) (response []byte, err error) {
-	return nil, nil
+	authorized := checkAuthority(req, rtspContext)
+	if !authorized {
+		return doUnauthorized(req, rtspContext)
+	}
+
+	// example 1 : UDP
+	// User-Agent: LibVLC/3.0.18 (LIVE555 Streaming Media v2016.11.28)\r\n
+	// Transport: RTP/AVP;unicast;client_port=49276-49277
+	// example 2 : TCP
+	// Transport: RTP/AVP/TCP;unicast;interleaved=0-1
+	userAgent := req.GetMessageValueByType(rtsplayer.MsgFieldType_UserAgent)
+	transport := req.GetMessageValueByType(rtsplayer.MsgFieldType_Transport)
+	client.UserAgent = userAgent
+
+	transport, profile, lowerTransport, unicast, params, err := rtsplayer.GetTrasportOption(transport)
+	if nil != err {
+		return
+	}
+	supportedTransport := true
+	// only support RTP
+	// todo : UDP support to be implemented
+	if transport != rtsplayer.TransportProtocol_RTP || profile != rtsplayer.TransportProfile_AVP ||
+		unicast != rtspContext.Unicast {
+		supportedTransport = false
+	}
+
+	// todo : support crsoss transfer serer - client transport type
+	if (lowerTransport == rtsplayer.TransportLowerProfile_UDP && rtspContext.Protocol != rtsplayer.TransferProtocol_UDP) ||
+		(lowerTransport == rtsplayer.TransportLowerProfile_TCP && rtspContext.Protocol != rtsplayer.TransferProtocol_TCP) {
+		supportedTransport = false
+	}
+
+	// client port // map[string]string
+	if lowerTransport == rtsplayer.TransportLowerProfile_UDP {
+		if val, ok := params[rtsplayer.TransportOption_ClientPort]; ok {
+			ports := strings.Split(val, "-")
+			if len(ports) >= 1 {
+				client.ClientPorts[0], _ = strconv.Atoi(ports[0])
+			}
+			if len(ports) >= 2 && len(ports[1]) > 0 {
+				client.ClientPorts[1], _ = strconv.Atoi(ports[1])
+			}
+		} else {
+			supportedTransport = false
+		}
+	}
+
+	if !supportedTransport {
+		rd := rtsplayer.ResponseData{
+			StatusCode: rtsplayer.UnsupportedTransport,
+			CSeq:       req.CSeq,
+		}
+		response, err = rtsplayer.BuildResponse(rd)
+		return
+	}
+
+	// response example 1 : UDP
+	// Session: 1804446769; timeout=60
+	// Transport: RTP/AVP;unicast;destination=172.168.11.33;source=172.168.11.148;client_port=49276-49277;server_port=13068-13069;ssrc=6EFF3234;mode="PLAY"
+	// response example 2 : TCP
+	// Transport: RTP/AVP/TCP;unicast;interleaved=0-1
+	// Session: 240583037
+
+	var knv []rtsplayer.KeyAndVlue
+	if !rtspContext.SkipAuthorization && nil != rtspContext.Auth {
+		knv = []rtsplayer.KeyAndVlue{
+			{
+				Key:   rtsplayer.GetMessageFieldText(rtsplayer.MsgFieldType_Authenticate),
+				Value: rtspContext.Auth.GetAuthResponseVaue(),
+			},
+		}
+	}
+
+	knv = append(knv, []rtsplayer.KeyAndVlue{
+		{
+			Key:   rtsplayer.GetMessageFieldText(rtsplayer.MsgFieldType_Session),
+			Value: fmt.Sprintf("%v; timeout=%v", rtspContext.SessionId, rtspServer.SessionTimeout.Seconds()),
+		},
+		// todo : UDP port pair info to be implemented
+		{
+			Key:   rtsplayer.GetMessageFieldText(rtsplayer.MsgFieldType_Transport),
+			Value: transport,
+		},
+		{
+			Key:   rtsplayer.GetMessageFieldText(rtsplayer.MsgFieldType_Date),
+			Value: time.Now().UTC().Format(rtsplayer.RFC1123GMT),
+		},
+	}...)
+
+	rd := rtsplayer.ResponseData{
+		StatusCode: rtsplayer.OK,
+		CSeq:       req.CSeq,
+		Messages:   knv,
+		Appendent:  rtspContext.SDP,
+	}
+	response, err = rtsplayer.BuildResponse(rd)
+
+	return
 }
 
 func (s *Server) doPlay(req *rtsplayer.RtspRequestLayer, client *RtspClient, rtspContext *rtsplayer.RtspContext) (response []byte, err error) {
+	authorized := checkAuthority(req, rtspContext)
+	if !authorized {
+		return doUnauthorized(req, rtspContext)
+	}
+
 	return nil, nil
 }
 

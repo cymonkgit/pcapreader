@@ -3,6 +3,7 @@ package rtsplayer
 
 import (
 	"errors"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -184,11 +185,14 @@ func ProbeRequest(packet *gopacket.Packet, ethPacket *layers.Ethernet, ipLayer *
 func probeOptions(mapId, serverAddress, clientAddress string, req *RtspRequestLayer, contexts *RtspContextMap) error {
 	_, ok := (*contexts)[mapId]
 
+	u, _ := url.Parse(req.Uri)
+
 	if !ok {
 		(*contexts)[mapId] = &RtspContext{
 			ClientAddress: clientAddress,
 			ServerAddress: serverAddress,
 			Url:           req.Uri,
+			Path:          u.Path,
 		}
 		if val := req.GetMessageValueByType(MsgFieldType_UserAgent); len(val) > 0 {
 			(*contexts)[mapId].UserAgent = val

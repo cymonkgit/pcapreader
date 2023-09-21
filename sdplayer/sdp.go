@@ -82,7 +82,7 @@ func (l SessionLayer) RestOfData() []byte {
 }
 
 func (s *SessionLayer) parseSessionAttribute(key, value string) {
-	if key != "m" && len(s.MediaInfos) >= 1 {
+	if key == "m" && len(s.MediaInfos) >= 1 {
 		s.parseMediaDescription(key, value)
 		return
 	}

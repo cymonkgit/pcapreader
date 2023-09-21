@@ -199,6 +199,7 @@ type RtspContext struct {
 	ClientAddress     string               // from ethernet/ip packet layer
 	ServerAddress     string               // from ethernet/ip packet layer
 	Url               string               // from OPTIONS
+	Path              string               // from Url
 	UserAgent         string               // from OPTIONS, DESCRIBE ...
 	SupportedMethod   []RequestMethodType  // from OPTIONS
 	Auth              *DigestAuthorization // from DESCRIBE
@@ -209,7 +210,7 @@ type RtspContext struct {
 	SessionId         int                  // from SETUP request
 	SessionTimeoutSec int                  // from SETUP request
 	ServerPort        string               // from SETUP request
-	CilenttPort       string               // from SETUP request
+	CilentPort        string               // from SETUP request
 	SSRC              string               // SSID. from SETUP reply
 	SDP               []byte               // SDP, from DESCRIBE response
 
@@ -247,7 +248,7 @@ func (c *RtspContext) GetBPFFilter() (filter string, err error) {
 			err = er
 			return
 		}
-		clientPorts := strings.Split(c.CilenttPort, "-")
+		clientPorts := strings.Split(c.CilentPort, "-")
 		if len(clientPorts) != 2 {
 			err = errors.New("invalid rtp receive port range value")
 			return
@@ -271,14 +272,22 @@ func (c *RtspContext) String() string {
 		}
 		return
 	}
+	var transfer string
+	if c.Protocol == TransferProtocol_UDP {
+		transfer = "(UDP)"
+	} else {
+		transfer = "(TCP)"
+	}
 	strs := []string{
 		fmt.Sprintln("client address:", c.ClientAddress),
 		fmt.Sprintln("server address:", c.ServerAddress),
+		fmt.Sprintln(""),
 		fmt.Sprintln("url:", c.Url),
+		fmt.Sprintln("Auth:", c.Auth, "authorized:", c.Authorized),
 		fmt.Sprintln("user agent:", c.UserAgent),
 		fmt.Sprintln("supported:", getSupported(c.SupportedMethod)),
 		fmt.Sprintln("accept:", c.Accept),
-		fmt.Sprintln("transfer type:", c.Protocol),
+		fmt.Sprintln("transfer type:", c.Protocol, transfer),
 		fmt.Sprintln("session id:", c.SessionId),
 		fmt.Sprintln("session timeout:", c.SessionTimeoutSec),
 		fmt.Sprintln("ssrc:", c.SSRC),
@@ -308,6 +317,7 @@ const (
 	MsgField_CSeq             = "CSeq"
 	MsgField_Transport        = "Transport"
 	MsgField_WWW_Authenticate = "WWW-Authenticate"
+	MsgField_Date             = "Date"
 
 	ContentType_SDP = "application/sdp"
 
@@ -317,6 +327,10 @@ const (
 	TransportProfile_AVP      = "AVP"
 	TransportLowerProfile_TCP = "TCP"
 	TransportLowerProfile_UDP = "UDP"
+
+	TransportOption_ClientPort = "client_port"
+
+	RFC1123GMT = "Mon, 02 Jan 2006 15:04:05 GMT"
 )
 
 const (
@@ -332,6 +346,7 @@ const (
 	MsgFieldType_CSeq
 	MsgFieldType_Transport
 	MsgFieldType_Authenticate
+	MsgFieldType_Date
 )
 
 var (
@@ -348,6 +363,7 @@ var (
 		MsgFieldType_CSeq:          MsgField_CSeq,
 		MsgFieldType_Transport:     MsgField_Transport,
 		MsgFieldType_Authenticate:  MsgField_WWW_Authenticate,
+		MsgFieldType_Date:          MsgField_Date,
 	}
 )
 
@@ -371,6 +387,9 @@ func GetMessageFieldType(text string) int {
 }
 
 func getAddress(ip, port string) string {
+	if strings.Contains(port, "(") {
+		port = port[:strings.Index(port, "(")]
+	}
 	return ip + ":" + port
 }
 
