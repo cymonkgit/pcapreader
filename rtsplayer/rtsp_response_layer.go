@@ -12,7 +12,6 @@ import (
 	"github.com/google/gopacket/layers"
 )
 
-// RtspResponseLayerType RTSP Response를 분석하기 위한 레이어 구조체를 정의.
 var RtspResponseLayerType gopacket.LayerType
 
 func init() {
@@ -25,6 +24,7 @@ func init() {
 	)
 }
 
+// RtspResponseLayerType RTSP Response를 분석하기 위한 레이어 구조체를 정의.
 type RtspResponseLayer struct {
 	CSeq     int               // CSeq
 	Version  string            // RTSP Version

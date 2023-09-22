@@ -18,7 +18,7 @@ func Test_ParseOptions(t *testing.T) {
 	fmt.Println("key:", k)
 	fmt.Printf("value:'%v'", v)
 
-	digest, e := ParseAuthorization(v)
+	digest, e := parseAuthorization(v)
 	// k, v, e := getFirstKeyAndValue(s)
 	// if nil != e {
 	// 	t.Fatal(e)

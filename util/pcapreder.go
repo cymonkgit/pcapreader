@@ -11,6 +11,7 @@ import (
 const (
 	LayerType_RtspRequest = 2001 + iota
 	LayerType_RtspResponse
+	LayerType_RtspInterleavedFrame
 	LayerType_Rtp
 	LayerType_Rtcp
 	LayerType_Sdp

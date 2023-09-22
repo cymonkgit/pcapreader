@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/cymonkgit/pcapreader/rtsplayer"
+	"github.com/cymonkgit/pcapreader/rtspserver/rtp"
 	// "github.com/labstack/gommon/log"
 )
 
@@ -783,4 +784,12 @@ func IsRtcpRequest(in []byte) (bool, int) {
 		}
 	}
 	return false, 0
+}
+
+func cacheRoutine() {
+
+}
+
+func interleavePacket(b []byte) (packets []rtp.RtpPacket, err error) {
+	return
 }
