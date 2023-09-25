@@ -1,3 +1,4 @@
+// package rtsp server is simple rtsp server for pcap reader
 package rtspserver
 
 import (
@@ -752,6 +753,7 @@ func readRequestWithTimeout(b *bufio.Reader, conn *net.Conn, duration time.Durat
 	// peek first line (end with '\r\n') and wait until timeout reached
 	for {
 		(*conn).SetReadDeadline(time.Now().Add(duration))
+		// peek
 		peek, er := b.Peek(4)
 		if len(peek) < 1 || nil != er {
 			return nil, er
@@ -812,8 +814,6 @@ func readRequestWithTimeout(b *bufio.Reader, conn *net.Conn, duration time.Durat
 	return
 }
 
-// var textprotoReaderPool sync.Pool
-
 func newTextprotoReader(br *bufio.Reader) *textproto.Reader {
 	return textproto.NewReader(br)
 }
@@ -834,4 +834,8 @@ func cacheRoutine() {
 
 func interleavePacket(b []byte) (packets []rtp.RtpPacket, err error) {
 	return
+}
+
+func readRtpPacket() {
+
 }

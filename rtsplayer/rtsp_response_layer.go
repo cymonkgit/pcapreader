@@ -220,7 +220,7 @@ func decodeRtspResponse(data []byte, p gopacket.PacketBuilder) error {
 	// AddLayer appends to the list of layers that the packet has
 	p.AddLayer(res)
 
-	// todo : optionize for debug
+	// todo : make option for debug
 	// if nil != res.trailer && len(res.trailer) > 0 {
 	// 	fmt.Println("")
 	// }

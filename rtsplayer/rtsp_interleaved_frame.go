@@ -9,10 +9,10 @@ import (
 	"github.com/google/gopacket"
 )
 
-var RtspInterleavedFrameType gopacket.LayerType
+var RtspInterleavedFrameLayerType gopacket.LayerType
 
 func init() {
-	RtspResponseLayerType = gopacket.RegisterLayerType(
+	RtspInterleavedFrameLayerType = gopacket.RegisterLayerType(
 		util.LayerType_RtspInterleavedFrame,
 		gopacket.LayerTypeMetadata{
 			Name:    "RTSPItnerleavedFrame",
@@ -29,9 +29,18 @@ type RtspInterleavedFrameLayer struct {
 	trailer []byte
 }
 
+// NewRtspRequestPacket function. RTSP request 에 해당하는 패킷인지 판별하여 패킷을 생성한다.
+func NewRtspInterleavedFramePacket(data []byte) gopacket.Packet {
+	return gopacket.NewPacket(
+		data,
+		RtspInterleavedFrameLayerType,
+		gopacket.Default,
+	)
+}
+
 // LayerType함수. gopacket.Layer interface의 implementation. 패킷의 LayerType을 반환
 func (l RtspInterleavedFrameLayer) LayerType() gopacket.LayerType {
-	return RtspInterleavedFrameType
+	return RtspInterleavedFrameLayerType
 }
 
 // LayerType함수. gopacket.Layer interface의 implementation. 패킷의 전체 byte 데이터를 반환.
@@ -65,7 +74,7 @@ func decodeRtspInterleavedFrame(data []byte, p gopacket.PacketBuilder) error {
 	// AddLayer appends to the list of layers that the packet has
 	p.AddLayer(res)
 
-	// todo : optionize for debug
+	// todo : make option for debug
 	// if nil != res.trailer && len(res.trailer) > 0 {
 	// 	fmt.Println("")
 	// }
@@ -86,7 +95,7 @@ func parseInterleavedFrame(data []byte) *RtspInterleavedFrameLayer {
 		Dollar:  data[0],
 		Channel: data[1],
 		Length:  Len,
-		body:    data[:Len],
+		body:    data[:4],
 		trailer: data[4 : Len+4],
 	}
 

@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/cymonkgit/pcapreader/util"
 	"github.com/google/gopacket"
@@ -166,7 +167,8 @@ func ProbeRequest(packet *gopacket.Packet, ethPacket *layers.Ethernet, ipLayer *
 
 	switch req.Method {
 	case "OPTIONS":
-		probeOptions(mapid, serverAddress, clientAddress, req, contexts)
+		timestamp := (*packet).Metadata().CaptureInfo.Timestamp
+		probeOptions(mapid, serverAddress, clientAddress, req, timestamp, contexts)
 	case "DESCRIBE":
 		probeDescribe(mapid, req, contexts)
 	case "SETUP":
@@ -182,17 +184,18 @@ func ProbeRequest(packet *gopacket.Packet, ethPacket *layers.Ethernet, ipLayer *
 }
 
 // probeOptions function. probe 중 "OPTIONS" request에 대한 요청 처리. 신규 scenario가 생성될 수 있다.
-func probeOptions(mapId, serverAddress, clientAddress string, req *RtspRequestLayer, contexts *RtspContextMap) error {
+func probeOptions(mapId, serverAddress, clientAddress string, req *RtspRequestLayer, timestamp time.Time, contexts *RtspContextMap) error {
 	_, ok := (*contexts)[mapId]
 
 	u, _ := url.Parse(req.Uri)
 
 	if !ok {
 		(*contexts)[mapId] = &RtspContext{
-			ClientAddress: clientAddress,
-			ServerAddress: serverAddress,
-			Url:           req.Uri,
-			Path:          u.Path,
+			ClientAddress:       clientAddress,
+			ServerAddress:       serverAddress,
+			Url:                 req.Uri,
+			Path:                u.Path,
+			firstRtspPacketTime: timestamp,
 		}
 		if val := req.GetMessageValueByType(MsgFieldType_UserAgent); len(val) > 0 {
 			(*contexts)[mapId].UserAgent = val
