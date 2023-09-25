@@ -187,7 +187,7 @@ sdp example
 func decodeSdp(data []byte, p gopacket.PacketBuilder) error {
 	req := parseSdp(data)
 	if nil == req {
-		return errors.New("not rtsp request")
+		return errors.New("no rtsp request")
 	}
 
 	// AddLayer appends to the list of layers that the packet has

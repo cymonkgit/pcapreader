@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strconv"
 	"strings"
 	"time"
 
@@ -214,6 +215,12 @@ type RtspContext struct {
 	SSRC              string               // SSID. from SETUP reply
 	SDP               []byte               // SDP, from DESCRIBE response
 
+	// additional info for RTP-Info
+	UseRtpInfo bool
+	RtpUrl     string
+	RtpSeq     int
+	RtpTime    int
+
 	//  user options
 	SkipAuthorization bool
 
@@ -221,7 +228,11 @@ type RtspContext struct {
 	lastReqMethod        RequestMethodType
 	lastReqCSeq          int
 	firstRtspPacketIndex int
-	firstRtpPacketIndex  int
+	playRequestDone      bool
+	serverHost           string
+	serverPorts          []int
+	clientHost           string
+	clientPorts          []int
 }
 
 type RtspContextMap map[string]*RtspContext
@@ -301,6 +312,42 @@ func (c *RtspContext) String() string {
 	return strings.Join(strs[:], "")
 }
 
+func (c *RtspContext) UpdatePlayTransportInfo() {
+	switch c.Protocol {
+	case TransferProtocol_TCP:
+		if host, port, err := GetIpPort(c.ClientAddress); nil == err {
+			portNum, _ := strconv.Atoi(port)
+			c.clientHost = host
+			c.clientPorts = []int{portNum}
+		}
+	case TransferProtocol_UDP:
+		if host, _, err := GetIpPort(c.ClientAddress); nil == err {
+			c.clientHost = host
+			strs := strings.Split(c.CilentPort, "-")
+			if len(strs) != 2 {
+				return
+			}
+			start, _ := strconv.Atoi(strs[0])
+			end, _ := strconv.Atoi(strs[1])
+			c.clientPorts = []int{start, end}
+		} else {
+			fmt.Println(err)
+		}
+		if host, _, err := GetIpPort(c.ServerAddress); nil == err {
+			c.serverHost = host
+			strs := strings.Split(c.ServerPort, "-")
+			if len(strs) != 2 {
+				return
+			}
+			start, _ := strconv.Atoi(strs[0])
+			end, _ := strconv.Atoi(strs[1])
+			c.serverPorts = []int{start, end}
+		} else {
+			fmt.Println(err)
+		}
+	}
+}
+
 // general messages
 const UnknownType = -1
 
@@ -318,6 +365,7 @@ const (
 	MsgField_Transport        = "Transport"
 	MsgField_WWW_Authenticate = "WWW-Authenticate"
 	MsgField_Date             = "Date"
+	MsgField_RtpInfo          = "RTP-Info"
 
 	ContentType_SDP = "application/sdp"
 
@@ -347,6 +395,7 @@ const (
 	MsgFieldType_Transport
 	MsgFieldType_Authenticate
 	MsgFieldType_Date
+	MsgFieldType_RtpInfo
 )
 
 var (
@@ -364,6 +413,7 @@ var (
 		MsgFieldType_Transport:     MsgField_Transport,
 		MsgFieldType_Authenticate:  MsgField_WWW_Authenticate,
 		MsgFieldType_Date:          MsgField_Date,
+		MsgFieldType_RtpInfo:       MsgField_RtpInfo,
 	}
 )
 

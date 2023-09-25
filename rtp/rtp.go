@@ -1,6 +1,10 @@
 package rtp
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/cymonkgit/pcapreader/util"
+)
 
 // RFC 3550 5.1
 /*
@@ -17,7 +21,7 @@ import "errors"
    |                             ....                              |
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 */
-type RTPHeader struct {
+type RtpHeader struct {
 	Version        uint8
 	Padding        uint8
 	Extension      uint8
@@ -30,33 +34,11 @@ type RTPHeader struct {
 	CSRCS          []uint32
 }
 
-func u16be(u uint16, b []byte) {
-	b[0] = byte(u >> 8)
-	b[1] = byte(u)
-}
-
-func beu16(b []byte) uint16 {
-	u := uint16(b[0])<<8 | uint16(b[1])
-	return u
-}
-
-func u32be(u uint32, b []byte) {
-	b[0] = byte(u >> 24)
-	b[1] = byte(u >> 16)
-	b[2] = byte(u >> 8)
-	b[3] = byte(u)
-}
-
-func beu32(b []byte) uint32 {
-	u := uint32(b[0])<<24 | uint32(b[1])<<16 | uint32(b[2])<<8 | uint32(b[3])
-	return u
-}
-
-func (h *RTPHeader) calcHeaderLen() int {
+func (h *RtpHeader) calcHeaderLen() int {
 	return 12 + len(h.CSRCS)*4
 }
 
-func (h RTPHeader) Marshal(b []byte) (marshalLen int, err error) {
+func (h RtpHeader) Marshal(b []byte) (marshalLen int, err error) {
 	l := h.calcHeaderLen()
 	if len(b) < l {
 		err = errors.New("invalid length of byte buffer")
@@ -73,12 +55,12 @@ func (h RTPHeader) Marshal(b []byte) (marshalLen int, err error) {
 	b[0] = h.Version<<6 | h.Padding<<5 | h.Extension<<4 | h.CSRCCount
 	b[1] = h.Marker<<7 | h.PayloadType
 
-	u16be(h.SequenceNumber, b[2:])
-	u32be(h.Timestamp, b[4:])
-	u32be(h.SSRC, b[8:])
+	util.U16be(h.SequenceNumber, b[2:])
+	util.U32be(h.Timestamp, b[4:])
+	util.U32be(h.SSRC, b[8:])
 	offset := 12
 	for _, csrc := range h.CSRCS {
-		u32be(csrc, b[offset:])
+		util.U32be(csrc, b[offset:])
 		offset += 4
 	}
 	marshalLen = l
@@ -86,7 +68,7 @@ func (h RTPHeader) Marshal(b []byte) (marshalLen int, err error) {
 	return
 }
 
-func (h *RTPHeader) Unmarshal(b []byte) (unmarshalLen int, err error) {
+func (h *RtpHeader) Unmarshal(b []byte) (unmarshalLen int, err error) {
 	if len(b) < 12 {
 		err = errors.New("not enough data")
 		return
@@ -107,15 +89,15 @@ func (h *RTPHeader) Unmarshal(b []byte) (unmarshalLen int, err error) {
 	h.Marker = val & 0x10 >> 7
 	h.PayloadType = val & 0x3f
 
-	h.SequenceNumber = beu16(b[2:])
-	h.Timestamp = beu32(b[4:])
-	h.SSRC = beu32(b[8:])
+	h.SequenceNumber = util.Beu16(b[2:])
+	h.Timestamp = util.Beu32(b[4:])
+	h.SSRC = util.Beu32(b[8:])
 
 	offset := 12
 	if h.CSRCCount > 0 {
 		h.CSRCS = make([]uint32, h.CSRCCount)
 		for offset < len(b) {
-			h.CSRCS = append(h.CSRCS, beu32(b[offset:]))
+			h.CSRCS = append(h.CSRCS, util.Beu32(b[offset:]))
 			offset += 4
 		}
 	}
@@ -126,7 +108,7 @@ func (h *RTPHeader) Unmarshal(b []byte) (unmarshalLen int, err error) {
 }
 
 type RtpPacket struct {
-	Header RTPHeader
+	Header RtpHeader
 	Data   []byte
 }
 

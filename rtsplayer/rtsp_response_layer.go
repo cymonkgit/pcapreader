@@ -52,7 +52,7 @@ func ProbeResponse(packet *gopacket.Packet, ethPacket *layers.Ethernet, ipLayer 
 
 	ipPacket, _ := (*ipLayer).(*layers.IPv4)
 	if (ipPacket.Protocol & layers.IPProtocolTCP) != layers.IPProtocolTCP {
-		return errors.New("not ipv4 packet")
+		return errors.New("no ipv4 packet")
 	}
 
 	serverIp := ipPacket.SrcIP.String()
@@ -60,12 +60,12 @@ func ProbeResponse(packet *gopacket.Packet, ethPacket *layers.Ethernet, ipLayer 
 
 	tcpLayer := (*packet).Layer(layers.LayerTypeTCP)
 	if nil == tcpLayer {
-		return errors.New("not tcp packet")
+		return errors.New("no tcp packet")
 	}
 
 	tcpPacket, ok := tcpLayer.(*layers.TCP)
 	if !ok || nil == tcpPacket {
-		return errors.New("not tcp packet")
+		return errors.New("no tcp packet")
 	}
 
 	payload := tcpPacket.LayerPayload()
@@ -75,17 +75,17 @@ func ProbeResponse(packet *gopacket.Packet, ethPacket *layers.Ethernet, ipLayer 
 
 	resPacket := NewRtspResponsePacket(payload)
 	if nil == resPacket {
-		return errors.New("not rtsp response packet")
+		return errors.New("no rtsp response packet")
 	}
 
 	rtspResponseLayer := resPacket.Layer(util.LayerType_RtspResponse)
 	if nil == rtspResponseLayer {
-		return errors.New("not rtsp response layer")
+		return errors.New("no rtsp response layer")
 	}
 
 	res, ok := rtspResponseLayer.(*RtspResponseLayer)
 	if !ok {
-		return errors.New("not rtsp response layer")
+		return errors.New("no rtsp response layer")
 	}
 
 	serverPort := tcpPacket.SrcPort.String()
@@ -139,6 +139,15 @@ func ProbeResponse(packet *gopacket.Packet, ethPacket *layers.Ethernet, ipLayer 
 					context.SSRC = v
 				}
 			}
+		case MsgFieldType_RtpInfo:
+			val := res.Messages[fieldName]
+			if url, seq, rtptime, err := GetRtpInfo(val); nil != err {
+				context.playRequestDone = true
+				context.UseRtpInfo = true
+				context.RtpUrl = url
+				context.RtpSeq = seq
+				context.RtpTime = rtptime
+			}
 		}
 	}
 
@@ -146,6 +155,11 @@ func ProbeResponse(packet *gopacket.Packet, ethPacket *layers.Ethernet, ipLayer 
 		context.Authorized = res.Status >= 200 && res.Status < 300
 		if context.Authorized {
 			fmt.Println("Authorized")
+		}
+	} else if context.lastReqMethod == RequestMethodType_Play {
+		if res.Status >= 200 && res.Status < 300 {
+			//
+			context.UpdatePlayTransportInfo()
 		}
 	}
 
@@ -200,7 +214,7 @@ func (l RtspResponseLayer) NextLayerType() gopacket.LayerType {
 func decodeRtspResponse(data []byte, p gopacket.PacketBuilder) error {
 	res := parseResponse(data)
 	if nil == res {
-		return errors.New("not rtsp response")
+		return errors.New("no rtsp response")
 	}
 
 	// AddLayer appends to the list of layers that the packet has
@@ -343,6 +357,28 @@ func GetTrasportOption(transport string) (protocol, profile, lowerTransport stri
 		parameters[k] = v
 	}
 
+	return
+}
+
+func GetRtpInfo(rtpInfo string) (url string, seq, rtpTime int, err error) {
+	strs := strings.Split(rtpInfo, ";")
+	if len(strs) < 1 {
+		err = errors.New("invalid RTP-Info")
+		return
+	}
+
+	for _, str := range strs {
+		if k, v, err := util.GetKeyAndValue(str); nil == err {
+			switch k {
+			case "url":
+				url = v
+			case "seq":
+				seq, _ = strconv.Atoi(v)
+			case "rtptime":
+				rtpTime, _ = strconv.Atoi(v)
+			}
+		}
+	}
 	return
 }
 

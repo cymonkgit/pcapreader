@@ -18,8 +18,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cymonkgit/pcapreader/rtp"
 	"github.com/cymonkgit/pcapreader/rtsplayer"
-	"github.com/cymonkgit/pcapreader/rtspserver/rtp"
 	// "github.com/labstack/gommon/log"
 )
 
@@ -697,6 +697,48 @@ func (s *Server) doPlay(req *rtsplayer.RtspRequestLayer, client *RtspClient, rts
 	if !authorized {
 		return doUnauthorized(req, rtspContext)
 	}
+
+	// userAgent := req.GetMessageValueByType(rtsplayer.MsgFieldType_UserAgent)
+	sessionId := req.GetMessageValueByType(rtsplayer.MsgFieldType_Session)
+
+	sessionIdNum, err := strconv.Atoi(sessionId)
+
+	if sessionIdNum != rtspContext.SessionId {
+		return nil, errors.New("invadlid seesionID:" + sessionId)
+	}
+
+	/*
+		response example:
+		CSeq: 5\r\n
+		Date: Tue, Sep 19 2023 04:40:23 GMT\r\n
+		Range: npt=0.000-\r\n
+		Session: 240583037
+		RTP-Info: url=rtsp://192.168.100.100:8554/stream/1/track1;seq=1231;rtptime=4718616\r\n
+		\r\n
+	*/
+
+	knv := []rtsplayer.KeyAndVlue{
+		{
+			Key:   rtsplayer.GetMessageFieldText(rtsplayer.MsgFieldType_Date),
+			Value: time.Now().Format(rtsplayer.RFC1123GMT),
+		},
+		// todo : UDP port pair info to be implemented
+		{
+			Key:   rtsplayer.GetMessageFieldText(rtsplayer.MsgFieldType_Range),
+			Value: "npt=0.000-",
+		},
+		{
+			Key:   rtsplayer.GetMessageFieldText(rtsplayer.MsgFieldType_Session),
+			Value: time.Now().UTC().Format(rtsplayer.RFC1123GMT),
+		},
+	}
+
+	rd := rtsplayer.ResponseData{
+		StatusCode: rtsplayer.OK,
+		CSeq:       req.CSeq,
+		Messages:   knv,
+	}
+	response, err = rtsplayer.BuildResponse(rd)
 
 	return nil, nil
 }

@@ -122,7 +122,7 @@ func ProbeRequest(packet *gopacket.Packet, ethPacket *layers.Ethernet, ipLayer *
 
 	ipPacket, _ := (*ipLayer).(*layers.IPv4)
 	if (ipPacket.Protocol & layers.IPProtocolTCP) != layers.IPProtocolTCP {
-		return errors.New("not ipv4 packet")
+		return errors.New("no ipv4 packet")
 	}
 
 	clientIp := ipPacket.SrcIP.String()
@@ -130,12 +130,12 @@ func ProbeRequest(packet *gopacket.Packet, ethPacket *layers.Ethernet, ipLayer *
 
 	tcpLayer := (*packet).Layer(layers.LayerTypeTCP)
 	if nil == tcpLayer {
-		return errors.New("not tcp packet")
+		return errors.New("no tcp packet")
 	}
 
 	tcpPacket, ok := tcpLayer.(*layers.TCP)
 	if !ok || nil == tcpPacket {
-		return errors.New("not tcp packet")
+		return errors.New("no tcp packet")
 	}
 
 	payload := tcpPacket.LayerPayload()
@@ -145,17 +145,17 @@ func ProbeRequest(packet *gopacket.Packet, ethPacket *layers.Ethernet, ipLayer *
 
 	reqPacket := NewRtspRequestPacket(payload)
 	if nil == reqPacket {
-		return errors.New("not rtsp request packet")
+		return errors.New("no rtsp request packet")
 	}
 
 	rtspRequestLayer := reqPacket.Layer(util.LayerType_RtspRequest)
 	if nil == rtspRequestLayer {
-		return errors.New("not rtsp request layer")
+		return errors.New("no rtsp request layer")
 	}
 
 	req, ok := rtspRequestLayer.(*RtspRequestLayer)
 	if !ok {
-		return errors.New("not rtsp request layer")
+		return errors.New("no rtsp request layer")
 	}
 
 	clientPort := tcpPacket.SrcPort.String()
@@ -257,7 +257,7 @@ func (l RtspRequestLayer) GetMessageValueByType(msgType int) string {
 func decodeRtspRequest(data []byte, p gopacket.PacketBuilder) error {
 	req := ParseRequest(data)
 	if nil == req {
-		return errors.New("not rtsp request")
+		return errors.New("no rtsp request")
 	}
 
 	// AddLayer appends to the list of layers that the packet has
