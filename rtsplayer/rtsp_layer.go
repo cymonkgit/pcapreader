@@ -224,15 +224,21 @@ type RtspContext struct {
 	//  user options
 	SkipAuthorization bool
 
+	// for demux
+	FirstRtspPacketTime time.Time
+
 	// internal
-	lastReqMethod       RequestMethodType
-	lastReqCSeq         int
-	firstRtspPacketTime time.Time
-	playRequestDone     bool
-	serverHost          string
-	serverPorts         []int
-	clientHost          string
-	clientPorts         []int
+	lastReqMethod   RequestMethodType
+	lastReqCSeq     int
+	playRequestDone bool
+	serverHost      string
+	serverPorts     []int
+	clientHost      string
+	clientPorts     []int
+
+	// synchronizer
+	readMore chan bool
+	output   chan<- *util.BytePacket
 }
 
 type RtspContextMap map[string]*RtspContext
@@ -246,8 +252,7 @@ func (c *RtspContext) GetBPFFilter() (filter string, err error) {
 			err = er
 			return
 		}
-		// filter = fmt.Sprintf("(tcp && src host %v && src port %v) || (tcp && dst host %v && dst port %v)", ip, port, ip, port)
-		filter = fmt.Sprintf("(tcp && dst host %v && dst port %v)", ip, port, ip, port)
+		filter = fmt.Sprintf("(tcp && dst host %v && dst port %v)", ip, port)
 		return
 	} else if c.Protocol == TransferProtocol_UDP {
 		serverIp, rtspPort, er := GetIpPort(c.ServerAddress)
@@ -511,111 +516,6 @@ func parseMessage(option string) (key, val string, err error) {
 	val = strings.Trim(option[index+1:], " \r\n")
 
 	return
-}
-
-type BytePacket struct {
-	Payload []byte
-	Delay   time.Duration
-}
-
-func DemuxRtsp(fileName string, ctx *RtspContext) error {
-	// Open up the pcap file for reading
-	handle, err := pcap.OpenOffline(fileName)
-	if err != nil {
-		return err
-	}
-	defer handle.Close()
-
-	// set BPF filter
-	bpfFilter, err := ctx.GetBPFFilter()
-	if nil != err {
-		return err
-	}
-	err = handle.SetBPFFilter(bpfFilter)
-	if nil != err {
-		return err
-	}
-
-	go func() {
-
-		lastTimestamp := time.Time{}
-		// Loop through packets in file
-		packetSource := gopacket.NewPacketSource(handle, handle.LinkType())
-		for packet := range packetSource.Packets() {
-			packetTimestamp := packet.Metadata().CaptureInfo.Timestamp
-			if packetTimestamp.Before(ctx.firstRtspPacketTime) {
-				continue
-			}
-
-			ethLayer := packet.Layer(layers.LayerTypeEthernet)
-			if ethLayer == nil {
-				continue
-			}
-
-			ethPacket, _ := ethLayer.(*layers.Ethernet)
-			if nil == ethPacket {
-				continue
-			}
-			// Extract and print the IP layer
-			ipLayer := packet.Layer(layers.LayerTypeIPv4)
-			if ipLayer == nil {
-				continue
-			}
-
-			ipPacket, _ := ipLayer.(*layers.IPv4)
-			if (ipPacket.Protocol & layers.IPProtocolTCP) != layers.IPProtocolTCP {
-				// return errors.New("no ipv4 packet")
-				continue
-			}
-
-			// clientIp := ipPacket.SrcIP.String()
-			// serverIp := ipPacket.DstIP.String()
-
-			tcpLayer := packet.Layer(layers.LayerTypeTCP)
-			if nil == tcpLayer {
-				// return errors.New("no tcp packet")
-				continue
-			}
-
-			tcpPacket, ok := tcpLayer.(*layers.TCP)
-			if !ok || nil == tcpPacket {
-				// return errors.New("no tcp packet")
-				continue
-			}
-
-			payload := tcpPacket.LayerPayload()
-			if nil == payload || len(payload) < 1 {
-				// return errors.New("has no payload")
-				continue
-			}
-
-			// fmt.Println("data:", payload[0])
-
-			interleavedPacket := NewRtspInterleavedFramePacket(payload)
-			if nil == interleavedPacket {
-				continue
-			}
-
-			interleavedLayer := interleavedPacket.Layer(util.LayerType_RtspInterleavedFrame)
-			if nil == interleavedLayer {
-				continue
-			}
-
-			// fmt.Println("time:", packetTime, "interleaved layer:", interleavedLayer)
-			delay := time.Duration(0)
-			if !lastTimestamp.IsZero() {
-				delay = packetTimestamp.Sub(lastTimestamp)
-			}
-			lastTimestamp = packetTimestamp
-
-			bp := BytePacket{
-				Payload: payload,
-				Delay:   delay,
-			}
-		}
-	}()
-
-	return nil
 }
 
 // buildTextProtoPacket make textprotocol lines to packet data (HTML...). each lines ended with '\r\n' and packet ends with '\r\n\r\n'

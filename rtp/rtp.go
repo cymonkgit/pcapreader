@@ -38,6 +38,10 @@ func (h *RtpHeader) calcHeaderLen() int {
 	return 12 + len(h.CSRCS)*4
 }
 
+func (h RtpHeader) GetHeaderLength() int {
+	return h.calcHeaderLen()
+}
+
 func (h RtpHeader) Marshal(b []byte) (marshalLen int, err error) {
 	l := h.calcHeaderLen()
 	if len(b) < l {
@@ -87,7 +91,7 @@ func (h *RtpHeader) Unmarshal(b []byte) (unmarshalLen int, err error) {
 
 	val = b[1]
 	h.Marker = val & 0x10 >> 7
-	h.PayloadType = val & 0x3f
+	h.PayloadType = val & 0x7f
 
 	h.SequenceNumber = util.Beu16(b[2:])
 	h.Timestamp = util.Beu32(b[4:])

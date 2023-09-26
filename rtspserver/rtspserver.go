@@ -832,7 +832,7 @@ func cacheRoutine() {
 
 }
 
-func interleavePacket(b []byte) (packets []rtp.RtpPacket, err error) {
+func makeInterleavePacket(b []byte) (packets []rtp.RtpPacket, err error) {
 	return
 }
 

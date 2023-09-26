@@ -22,6 +22,7 @@ func init() {
 
 type RtpLayer struct {
 	Header rtp.RtpHeader
+	header []byte
 	body   []byte
 }
 
@@ -37,7 +38,7 @@ func (l RtpLayer) LayerContents() []byte {
 
 // LayerPayload함수. gopacket.Layer interface의 implementation. 패킷 payload byte 데이터를 반환.
 func (l RtpLayer) LayerPayload() []byte {
-	return nil
+	return l.body
 }
 
 func (l RtpLayer) NextLayerType() gopacket.LayerType {
@@ -74,6 +75,8 @@ func parseRtp(data []byte) *RtpLayer {
 
 	ret := &RtpLayer{
 		Header: pkt.Header,
+		header: data[:pkt.Header.GetHeaderLength()],
+		body:   data[pkt.Header.GetHeaderLength():],
 	}
 
 	return ret
