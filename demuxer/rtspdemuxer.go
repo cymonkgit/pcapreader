@@ -14,45 +14,60 @@ import (
 )
 
 type RtspDemuxer struct {
-	Handle       pcap.Handle
+	handle       *pcap.Handle
 	BpfFilter    string
 	packetSource *gopacket.PacketSource
 
 	firstRtspPacketTime time.Time
+
+	firstRtspTimestamp uint32
 }
 
-func (dmx *RtspDemuxer) Open(fileName string, ctx *rtsplayer.RtspContext) error {
+func Open(fileName string, ctx *rtsplayer.RtspContext) (dmx *RtspDemuxer, err error) {
 	// Open up the pcap file for reading
 	handle, err := pcap.OpenOffline(fileName)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	defer handle.Close()
 
 	// set BPF filter
 	bpfFilter, err := ctx.GetBPFFilter()
 	if nil != err {
-		return err
+		return nil, err
 	}
+
 	err = handle.SetBPFFilter(bpfFilter)
 	if nil != err {
-		return err
+		return nil, err
 	}
 
+	dmx = &RtspDemuxer{}
 	dmx.packetSource = gopacket.NewPacketSource(handle, handle.LinkType())
 	if nil == dmx {
-		return errors.New("failed to create packet source")
+		return nil, errors.New("failed to create packet source")
 	}
 
+	dmx.handle = handle
 	dmx.firstRtspPacketTime = ctx.FirstRtspPacketTime
 
-	return nil
+	return dmx, nil
 }
 
-func (dmx *RtspDemuxer) ReadPacket() {
-	// lastTimestamp := time.Time{}
+func (dmx *RtspDemuxer) Close() {
+	if nil != dmx.handle {
+		dmx.handle.Close()
+	}
+}
+
+func (dmx *RtspDemuxer) ReadPacket() (*util.BytePacket, error) {
 	// Loop through packets in file
-	for packet := range dmx.packetSource.Packets() {
+	// ignore channel, ssrc id. just pass through stream server to client to emulate RTSP stream
+	for {
+		packet, err := dmx.packetSource.NextPacket()
+		if nil != err {
+			return nil, err
+		}
+
 		packetTimestamp := packet.Metadata().CaptureInfo.Timestamp
 		if packetTimestamp.Before(dmx.firstRtspPacketTime) {
 			continue
@@ -67,6 +82,7 @@ func (dmx *RtspDemuxer) ReadPacket() {
 		if nil == ethPacket {
 			continue
 		}
+
 		// Extract and print the IP layer
 		ipLayer := packet.Layer(layers.LayerTypeIPv4)
 		if ipLayer == nil {
@@ -78,9 +94,6 @@ func (dmx *RtspDemuxer) ReadPacket() {
 			// return errors.New("no ipv4 packet")
 			continue
 		}
-
-		// clientIp := ipPacket.SrcIP.String()
-		// serverIp := ipPacket.DstIP.String()
 
 		tcpLayer := packet.Layer(layers.LayerTypeTCP)
 		if nil == tcpLayer {
@@ -118,18 +131,15 @@ func (dmx *RtspDemuxer) ReadPacket() {
 			continue
 		}
 
-		timestamp := rtpLayer.(*rtplayer.RtpLayer).Header.Timestamp
+		// timestamp := rtpLayer.(*rtplayer.RtpLayer).Header.Timestamp
+		ssrc := rtpLayer.(*rtplayer.RtpLayer).Header.SSRC
 
 		bp := util.BytePacket{
-			Payload:   payload,
-			Timestamp: timestamp,
+			Payload: payload,
+			Time:    packetTimestamp,
+			SSRC:    ssrc,
 		}
 
-		fmt.Println(bp)
-
-		// return &bp
-		// ctx.output <- &bp
+		return &bp, nil
 	}
-
-	return nil
 }

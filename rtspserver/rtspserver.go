@@ -19,8 +19,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cymonkgit/pcapreader/rtp"
+	"github.com/cymonkgit/pcapreader/demuxer"
 	"github.com/cymonkgit/pcapreader/rtsplayer"
+	"github.com/cymonkgit/pcapreader/util"
 	// "github.com/labstack/gommon/log"
 )
 
@@ -34,12 +35,11 @@ type UDPPair struct {
 type RtspSources map[string]string
 
 type Server struct {
-	Sessions *sync.Map
 	UdpPair  *UDPPair
+	Sessions *sync.Map
 
-	RtspClients *sync.Map
-
-	Started bool
+	Started      bool
+	PcapFilename string
 
 	SessionTimeout time.Duration
 
@@ -52,7 +52,7 @@ type ServerConfig struct {
 	TimeOutSecond int
 }
 
-type RtspClient struct {
+type RtspSession struct {
 	Sock        *net.Conn
 	Server      *Server
 	PeerIp      net.Addr
@@ -64,6 +64,8 @@ type RtspClient struct {
 	LowProfile  string
 	Unicast     bool
 	ClientPorts [2]int
+
+	InterleavedChannel chan *util.BytePacket
 
 	CreateTime        time.Time
 	ConnectedTime     time.Time
@@ -86,45 +88,25 @@ type RtspClient struct {
 	cancel context.CancelFunc
 }
 
-type ServerInerface interface {
-	AddHandler(path string, handler *RTSPHandler) error
-	RemoveHandler(path string, handler *RTSPHandler) error
-	AddUDPPort(path string)
-	ListenAndServe(addr string) error
-}
-
-type RTSPHandler interface {
-	HandleOptions(request *rtsplayer.RtspRequestLayer) ([]byte, error)
-	HandleDescribe(request *rtsplayer.RtspRequestLayer) ([]byte, error)
-	HandleSetup(request *rtsplayer.RtspRequestLayer) ([]byte, error)
-	HandleSetupTCP(request *rtsplayer.RtspRequestLayer) ([]byte, error)
-	HandleSetupUDP(request *rtsplayer.RtspRequestLayer) ([]byte, error)
-	HandlePlay(request *rtsplayer.RtspRequestLayer) ([]byte, error)
-	HandleTeardown(request *rtsplayer.RtspRequestLayer) ([]byte, error)
-}
-
-type RtspServerSession struct {
-	Key                string
-	InterleavedChannel chan *rtsplayer.BytePacket
-	InterleavedMode    bool
-	SSRC               uint32 // todo : consider multi channel
-}
-
-var rtspServer Server
+var (
+	rtspServer   Server
+	pcapFilename string
+)
 
 func init() {
 	rtspServer = Server{
 		Sessions:       &sync.Map{},
-		RtspClients:    &sync.Map{},
 		SessionTimeout: time.Second * 30,
 	}
 }
 
-func StartServer(rtspCtx *rtsplayer.RtspContext, quit *chan os.Signal) {
+func StartServer(rtspCtx *rtsplayer.RtspContext, fileName string, quit *chan os.Signal) {
 	go func() {
 		defer func() {
 			*quit <- nil
 		}()
+
+		pcapFilename = fileName
 
 		if err := rtspServer.Start(rtspCtx); err != nil {
 			fmt.Println("start RTSP server error:", err)
@@ -176,19 +158,6 @@ func (s *Server) Start(rtspCtx *rtsplayer.RtspContext) error {
 	}
 }
 
-func (s *Server) GetSession(key string) *RtspServerSession {
-	v, ok := s.Sessions.Load(key)
-	if ok {
-		return v.(*RtspServerSession)
-	}
-	// never
-	return nil
-}
-
-func (s *Server) DeleteSession(key string) {
-	s.Sessions.Delete(s)
-}
-
 func (s *Server) DoRtsp(conn net.Conn, rtspCtx *rtsplayer.RtspContext) {
 	peerIp := conn.RemoteAddr()
 	logTag := fmt.Sprintf("[rtspserver][%v][%v]", peerIp, rtspCtx.Url)
@@ -201,21 +170,22 @@ func (s *Server) DoRtsp(conn net.Conn, rtspCtx *rtsplayer.RtspContext) {
 	}()
 
 	fmt.Printf("%v rtsp connection request from %v\n", logTag, peerIp)
-	var client *RtspClient
+	var session *RtspSession
 
-	client = &RtspClient{
-		Sock:          &conn,
-		Server:        s,
-		PeerIp:        peerIp,
-		ConnectedTime: time.Now(),
-		ClockRates:    make([]uint32, 0),
+	session = &RtspSession{
+		Sock:               &conn,
+		Server:             s,
+		PeerIp:             peerIp,
+		ConnectedTime:      time.Now(),
+		ClockRates:         make([]uint32, 0),
+		InterleavedChannel: make(chan *util.BytePacket, 1000),
 	}
 
 	// log.Infoln(logTag, "rtsp client of", client.MediaId, client.PeerIp.String(), "added")
-	s.RtspClients.Store(conn, client)
+	s.Sessions.Store(conn, session)
 
 	defer func() {
-		s.RtspClients.Delete(conn)
+		s.Sessions.Delete(conn)
 		// log.Infoln(logTag, "rtsp client of", client.MediaId, client.PeerIp.String(), "removed")
 		conn.Close()
 		log.Println(logTag, "rtsp connection closed (defer)")
@@ -229,8 +199,8 @@ func (s *Server) DoRtsp(conn net.Conn, rtspCtx *rtsplayer.RtspContext) {
 	// var err error
 
 	ctx, cancel := context.WithCancel(context.Background())
-	client.ctx = ctx
-	client.cancel = cancel
+	session.ctx = ctx
+	session.cancel = cancel
 
 	requestChannel := make(chan *rtsplayer.RtspRequestLayer)
 	stopReadRequest := false
@@ -240,25 +210,18 @@ func (s *Server) DoRtsp(conn net.Conn, rtspCtx *rtsplayer.RtspContext) {
 
 	// todo : go
 	go s.readRequest(&stopReadRequest, reader, &conn, requestChannel, &cancel)
-	var InterleavedChannel chan *rtsplayer.BytePacket
 
 	// sequenceNumber := uint16(1)
-	var session *RtspServerSession
-	defer func() {
-		if session != nil {
-			s.DeleteSession(session.Key)
-		}
-	}()
-
 	sendCnt := 0
-LOOP:
+	lastPacketTime := time.Time{}
+SENDERLOOP:
 	for {
 		select {
 		case <-ctx.Done():
 			fmt.Println("context done")
-			break LOOP
+			break SENDERLOOP
 		case req := <-requestChannel:
-			if res, err := s.dispatchRequest(req, client, rtspCtx); nil != err {
+			if res, err := s.dispatchRequest(req, session, rtspCtx); nil != err {
 				fmt.Println("failed to dispatch request. err:", err.Error())
 				// send 500 internal
 				res, _ = rtsplayer.BuildResponse(rtsplayer.ResponseData{StatusCode: rtsplayer.InternalServerError, CSeq: req.CSeq})
@@ -272,144 +235,31 @@ LOOP:
 			}
 			// todo : remove
 			fmt.Println(req)
-		case ip := <-InterleavedChannel:
+		case ip := <-session.InterleavedChannel:
+
+			var dur time.Duration
+			if lastPacketTime.IsZero() {
+				dur = 0
+			} else {
+				dur = ip.Time.Sub(lastPacketTime)
+			}
+
+			lastPacketTime = ip.Time
+			if dur != time.Duration(0) {
+				time.Sleep(dur)
+			}
+
 			if rtspCtx.Protocol == rtsplayer.TransferProtocol_TCP {
 				if _, err := conn.Write(ip.Payload); nil != err {
-
+					break SENDERLOOP
 				} else {
 					sendCnt++
 				}
 			} else {
 				// todo: UDP transfer to be implemented
 			}
-			time.Sleep(ip.Delay)
 		}
 	}
-
-	// log.Println(logTag, "rtsp session handler start", logTag)
-	// lastIPReceive := time.Time{}
-	// for {
-	// 	select {
-	// 	case <-ctx.Done():
-	// 		log.Println(logTag, "context done")
-	// 		return
-	// 	case req := <-requestChannel:
-	// 		client.LastRequestTime = time.Now()
-
-	// 		// log.Traceln(logTag, "req channel. recv:", req.Method)
-	// 		res, err = s.HandleRequest(&logTag, req, client)
-
-	// 		if err != nil {
-	// 			log.Println(logTag, "handle request error. err:", err.Error())
-	// 			return
-	// 		}
-
-	// 		// session 이 없는 경우에만 session 초기화.
-	// 		if len(req.Header.Get("Session")) > 0 {
-	// 			sessionId := req.Header.Get("Session")
-	// 			// session 키 값이 같으면 생략
-	// 			if nil == session ||
-	// 				(session != nil && sessionId != session.Key) {
-	// 				if session = s.GetSession(sessionId); session != nil {
-	// 					InterleavedChannel = session.InterleavedChannel
-	// 					log.Infoln(logTag, "session, ich = ", InterleavedChannel)
-	// 				}
-	// 			}
-	// 		}
-
-	// 		res.ContentLength = int64(len(res.Body))
-	// 		err = res.Write(conn)
-	// 		if err != nil {
-	// 			log.Errorln(logTag, "write response error. err:", err.Error())
-	// 			return
-	// 		} else {
-	// 			log.Debugln(logTag, "write ", req.Method, "response. status code:", res.StatusCode, ", status:", res.Status)
-	// 		}
-	// case ip := <-InterleavedChannel:
-	// 	if lastIPReceive.IsZero() {
-	// 		log.Traceln(logTag, "interleaved channel received.")
-	// 		lastIPReceive = time.Now()
-	// 	} else {
-	// 		t := time.Now()
-	// 		log.Traceln(logTag, "interleaved channel received. delay: ", t.Sub(lastIPReceive), ", marker:", ip.Marker)
-	// 		lastIPReceive = t
-	// 	}
-	// 	// interleave ??
-	// 	/*
-	// 		S->C: $\000{2 byte length}{"length" bytes data, w/RTP header}
-	// 		S->C: $\000{2 byte length}{"length" bytes data, w/RTP header}
-	// 		S->C: $\001{2 byte length}{"length" bytes  RTCP packet}
-	// 	*/
-	// 	interleaveHeader := make([]byte, 4)
-	// 	interleaveHeader[0] = '$'
-	// 	interleaveHeader[1] = ip.Channel
-	// 	interleaveHeader[2] = 0
-	// 	interleaveHeader[3] = 0
-	// 	uin := make([]byte, 2)
-
-	// 	binary.BigEndian.PutUint16(uin, uint16(len(ip.Packet)+12))
-	// 	// TODO : pkt[1] = session -> channel
-	// 	interleaveHeader[2] = uin[0]
-	// 	interleaveHeader[3] = uin[1]
-
-	// 	// todo : expand payload type for other codec and stream type
-	// 	header := RTPHeader{
-	// 		Version:        2,
-	// 		Padding:        0,
-	// 		Extension:      0,
-	// 		CSRCCount:      0,
-	// 		Marker:         ip.Marker,
-	// 		PayloadType:    96,
-	// 		SequenceNumber: uint16(sequenceNumber),
-	// 		Timestamp:      ip.Timestamp,
-	// 		SSRC:           session.SSRC, // check
-	// 		CSRCS:          []uint32{},
-	// 	}
-
-	// 	sequenceNumber++
-
-	// 	// create packet
-	// 	buf, err := createRtpPacket(&header, ip)
-	// 	if err != nil {
-	// 		log.Errorln(logTag, "failed to create RTP packet. err:", err.Error())
-	// 		return
-	// 	}
-
-	// 	var written int
-	// 	bts := buf.Bytes()
-	// 	btss := fmt.Sprintf("%02X %02X %02X %02X", bts[0], bts[1], bts[2], bts[3])
-	// 	if ip.Marker == 1 {
-	// 		time.Sleep(time.Microsecond * 150)
-	// 		client.LastTransferTime = time.Now()
-
-	// 		// 1초에 한 번 전송률 계산
-	// 		if client.GetElapsedAfterLastTransferRateCheck(client.LastTransferTime) > time.Second {
-	// 			client.CalcTransferRate(ip.Timestamp)
-	// 		}
-	// 	}
-	// 	written, err = conn.Write(bts)
-	// 	if err != nil {
-	// 		log.Errorln(logTag, "connection write RTP packet error. err:", err.Error())
-	// 		return
-	// 	} else {
-	// 		if enableTraceLog.Get() {
-	// 			log.Debugln(logTag, "write. interleaved packet. written:", written, ", seq:", header.SequenceNumber, ", Timestamp:", header.Timestamp, ", marker:", header.Marker, ",", btss)
-	// 		}
-	// 	}
-
-	// 	if ip.Marker == 1 {
-	// 		sendCnt++
-	// 		// if sendCnt%100 == 1 {
-	// 		// 	log.Debugln(logTag, "send packet count:", sendCnt)
-	// 		// }
-	// 	} else {
-	// 		time.Sleep(time.Microsecond * 50)
-	// 	}
-
-	// 	default:
-	// 		time.Sleep(5 * time.Millisecond)
-	// 	}
-	// }
 }
 
 func (s *Server) readRequest(stopReadRequest *bool, reader *bufio.Reader, conn *net.Conn, requestChannel chan *rtsplayer.RtspRequestLayer, cancel *context.CancelFunc) {
@@ -446,7 +296,7 @@ func (s *Server) readRequest(stopReadRequest *bool, reader *bufio.Reader, conn *
 	}
 }
 
-func (s *Server) dispatchRequest(req *rtsplayer.RtspRequestLayer, client *RtspClient, rtspContext *rtsplayer.RtspContext) (response []byte, err error) {
+func (s *Server) dispatchRequest(req *rtsplayer.RtspRequestLayer, client *RtspSession, rtspContext *rtsplayer.RtspContext) (response []byte, err error) {
 	fmt.Println("request received.", req.Method)
 
 	switch req.Method {
@@ -487,7 +337,7 @@ func checkPath(req *rtsplayer.RtspRequestLayer, rtspContext *rtsplayer.RtspConte
 }
 
 // doOptions 'OPTIONS' request handler
-func (s *Server) doOptions(req *rtsplayer.RtspRequestLayer, client *RtspClient, rtspContext *rtsplayer.RtspContext) (response []byte, err error) {
+func (s *Server) doOptions(req *rtsplayer.RtspRequestLayer, client *RtspSession, rtspContext *rtsplayer.RtspContext) (response []byte, err error) {
 	if rd := checkPath(req, rtspContext); nil != rd {
 		response, err = rtsplayer.BuildResponse(*rd)
 		if nil == err {
@@ -550,7 +400,7 @@ func doUnauthorized(req *rtsplayer.RtspRequestLayer, rtspContext *rtsplayer.Rtsp
 }
 
 // doOptions 'DESCRIBE' request handler
-func (s *Server) doDescribe(req *rtsplayer.RtspRequestLayer, client *RtspClient, rtspContext *rtsplayer.RtspContext) (response []byte, err error) {
+func (s *Server) doDescribe(req *rtsplayer.RtspRequestLayer, client *RtspSession, rtspContext *rtsplayer.RtspContext) (response []byte, err error) {
 	authorized := checkAuthority(req, rtspContext)
 	if !authorized {
 		return doUnauthorized(req, rtspContext)
@@ -592,7 +442,7 @@ func (s *Server) doDescribe(req *rtsplayer.RtspRequestLayer, client *RtspClient,
 }
 
 // doSetup 'SETUP' request handler
-func (s *Server) doSetup(req *rtsplayer.RtspRequestLayer, client *RtspClient, rtspContext *rtsplayer.RtspContext) (response []byte, err error) {
+func (s *Server) doSetup(req *rtsplayer.RtspRequestLayer, client *RtspSession, rtspContext *rtsplayer.RtspContext) (response []byte, err error) {
 	authorized := checkAuthority(req, rtspContext)
 	if !authorized {
 		return doUnauthorized(req, rtspContext)
@@ -604,10 +454,10 @@ func (s *Server) doSetup(req *rtsplayer.RtspRequestLayer, client *RtspClient, rt
 	// example 2 : TCP
 	// Transport: RTP/AVP/TCP;unicast;interleaved=0-1
 	userAgent := req.GetMessageValueByType(rtsplayer.MsgFieldType_UserAgent)
-	transport := req.GetMessageValueByType(rtsplayer.MsgFieldType_Transport)
+	transportReq := req.GetMessageValueByType(rtsplayer.MsgFieldType_Transport)
 	client.UserAgent = userAgent
 
-	transport, profile, lowerTransport, unicast, params, err := rtsplayer.GetTrasportOption(transport)
+	transport, profile, lowerTransport, unicast, params, err := rtsplayer.GetTrasportOption(transportReq)
 	if nil != err {
 		return
 	}
@@ -674,7 +524,7 @@ func (s *Server) doSetup(req *rtsplayer.RtspRequestLayer, client *RtspClient, rt
 		// todo : UDP port pair info to be implemented
 		{
 			Key:   rtsplayer.GetMessageFieldText(rtsplayer.MsgFieldType_Transport),
-			Value: transport,
+			Value: transportReq,
 		},
 		{
 			Key:   rtsplayer.GetMessageFieldText(rtsplayer.MsgFieldType_Date),
@@ -686,14 +536,13 @@ func (s *Server) doSetup(req *rtsplayer.RtspRequestLayer, client *RtspClient, rt
 		StatusCode: rtsplayer.OK,
 		CSeq:       req.CSeq,
 		Messages:   knv,
-		Appendent:  rtspContext.SDP,
 	}
 	response, err = rtsplayer.BuildResponse(rd)
 
 	return
 }
 
-func (s *Server) doPlay(req *rtsplayer.RtspRequestLayer, client *RtspClient, rtspContext *rtsplayer.RtspContext) (response []byte, err error) {
+func (s *Server) doPlay(req *rtsplayer.RtspRequestLayer, session *RtspSession, rtspContext *rtsplayer.RtspContext) (response []byte, err error) {
 	authorized := checkAuthority(req, rtspContext)
 	if !authorized {
 		return doUnauthorized(req, rtspContext)
@@ -730,8 +579,15 @@ func (s *Server) doPlay(req *rtsplayer.RtspRequestLayer, client *RtspClient, rts
 		},
 		{
 			Key:   rtsplayer.GetMessageFieldText(rtsplayer.MsgFieldType_Session),
-			Value: time.Now().UTC().Format(rtsplayer.RFC1123GMT),
+			Value: fmt.Sprintf("%v", rtspContext.SessionId),
 		},
+	}
+
+	if rtspContext.UseRtpInfo {
+		knv = append(knv, rtsplayer.KeyAndVlue{
+			Key:   rtsplayer.GetMessageFieldText(rtsplayer.MsgFieldType_RtpInfo),
+			Value: fmt.Sprintf("url=%v;seq=%v;rtptime=%v", rtspContext.RtpUrl, fmt.Sprintln(rtspContext.RtpSeq), rtspContext.RtpTime),
+		})
 	}
 
 	rd := rtsplayer.ResponseData{
@@ -741,10 +597,16 @@ func (s *Server) doPlay(req *rtsplayer.RtspRequestLayer, client *RtspClient, rts
 	}
 	response, err = rtsplayer.BuildResponse(rd)
 
-	return nil, nil
+	if nil != err {
+		return nil, err
+	}
+
+	go demuxRoutine(pcapFilename, session, rtspContext)
+
+	return response, nil
 }
 
-func (s *Server) doPause(req *rtsplayer.RtspRequestLayer, client *RtspClient, rtspContext *rtsplayer.RtspContext) (response []byte, err error) {
+func (s *Server) doPause(req *rtsplayer.RtspRequestLayer, client *RtspSession, rtspContext *rtsplayer.RtspContext) (response []byte, err error) {
 	return nil, nil
 }
 
@@ -828,12 +690,29 @@ func IsRtcpRequest(in []byte) (bool, int) {
 	return false, 0
 }
 
-func cacheRoutine() {
+func demuxRoutine(filename string, session *RtspSession, rtspctx *rtsplayer.RtspContext) {
+	dmx, err := demuxer.Open(filename, rtspctx)
+	if nil != err {
+		return
+	}
+	defer dmx.Close()
 
-}
+	ctx, _ := context.WithCancel(session.ctx)
 
-func makeInterleavePacket(b []byte) (packets []rtp.RtpPacket, err error) {
-	return
+DEMUXLOOP:
+	for {
+		packet, err := dmx.ReadPacket()
+		if nil != err {
+			return
+		}
+
+		session.InterleavedChannel <- packet
+		select {
+		case <-ctx.Done():
+			break DEMUXLOOP
+		default:
+		}
+	}
 }
 
 func readRtpPacket() {

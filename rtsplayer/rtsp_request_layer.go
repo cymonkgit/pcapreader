@@ -195,7 +195,7 @@ func probeOptions(mapId, serverAddress, clientAddress string, req *RtspRequestLa
 			ServerAddress:       serverAddress,
 			Url:                 req.Uri,
 			Path:                u.Path,
-			firstRtspPacketTime: timestamp,
+			FirstRtspPacketTime: timestamp,
 		}
 		if val := req.GetMessageValueByType(MsgFieldType_UserAgent); len(val) > 0 {
 			(*contexts)[mapId].UserAgent = val

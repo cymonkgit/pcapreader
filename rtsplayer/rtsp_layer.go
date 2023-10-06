@@ -235,10 +235,6 @@ type RtspContext struct {
 	serverPorts     []int
 	clientHost      string
 	clientPorts     []int
-
-	// synchronizer
-	readMore chan bool
-	output   chan<- *util.BytePacket
 }
 
 type RtspContextMap map[string]*RtspContext

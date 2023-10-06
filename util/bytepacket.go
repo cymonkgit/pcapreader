@@ -1,11 +1,15 @@
 package util
 
-import "sync"
+import (
+	"sync"
+	"time"
+)
 
 // channel deliver data format
 type BytePacket struct {
-	Payload   []byte
-	Timestamp uint32
+	Payload []byte
+	Time    time.Time
+	SSRC    uint32
 }
 
 // interleaved packet queue
