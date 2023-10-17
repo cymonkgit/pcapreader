@@ -22,7 +22,6 @@ import (
 	"github.com/cymonkgit/pcapreader/demuxer"
 	"github.com/cymonkgit/pcapreader/rtsplayer"
 	"github.com/cymonkgit/pcapreader/util"
-	// "github.com/labstack/gommon/log"
 )
 
 type UDPPair struct {

@@ -242,13 +242,19 @@ type RtspContextMap map[string]*RtspContext
 func (c *RtspContext) GetBPFFilter() (filter string, err error) {
 	// TCP
 	if c.Protocol == TransferProtocol_TCP {
-		// e.g "(src host 172.168.11.148 && src port 554) || (dst host 172.168.11.148 && dst port 554)"
-		ip, port, er := GetIpPort(c.ClientAddress)
+		// e.g "(src host 172.168.11.148 && src dstPort 554) || (dst host 172.168.11.148 && dst dstPort 554)"
+		srcIp, srcPort, er := GetIpPort(c.ServerAddress)
 		if nil != er {
 			err = er
 			return
 		}
-		filter = fmt.Sprintf("(tcp && dst host %v && dst port %v)", ip, port)
+
+		dstIp, dstPort, er := GetIpPort(c.ClientAddress)
+		if nil != er {
+			err = er
+			return
+		}
+		filter = fmt.Sprintf("(tcp && src host %v && src port %v && dst host %v && dst port %v)", srcIp, srcPort, dstIp, dstPort)
 		return
 	} else if c.Protocol == TransferProtocol_UDP {
 		serverIp, rtspPort, er := GetIpPort(c.ServerAddress)

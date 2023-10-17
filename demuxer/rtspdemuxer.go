@@ -3,6 +3,7 @@ package demuxer
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/cymonkgit/pcapreader/rtplayer"
@@ -49,6 +50,82 @@ func Open(fileName string, ctx *rtsplayer.RtspContext) (dmx *RtspDemuxer, err er
 
 	dmx.handle = handle
 	dmx.firstRtspPacketTime = ctx.FirstRtspPacketTime
+	Unx := ctx.FirstRtspPacketTime.UnixNano()
+	fmt.Println(Unx, ctx.FirstRtspPacketTime.String())
+
+	return dmx, nil
+}
+
+func getBPFFilter(transfer rtsplayer.TransferType, serverAddress, clientAddress, clientPort string) (filter string, err error) {
+	// TCP
+	if transfer == rtsplayer.TransferProtocol_TCP {
+		// e.g "(src host 172.168.11.148 && src dstPort 554) || (dst host 172.168.11.148 && dst dstPort 554)"
+		srcIp, srcPort, er := rtsplayer.GetIpPort(serverAddress)
+		if nil != er {
+			err = er
+			return
+		}
+
+		dstIp, dstPort, er := rtsplayer.GetIpPort(clientAddress)
+		if nil != er {
+			err = er
+			return
+		}
+		filter = fmt.Sprintf("(tcp && src host %v && src port %v && dst host %v && dst port %v)", srcIp, srcPort, dstIp, dstPort)
+		return
+	} else if transfer == rtsplayer.TransferProtocol_UDP {
+		serverIp, rtspPort, er := rtsplayer.GetIpPort(serverAddress)
+		if nil != er {
+			err = er
+			return
+		}
+		clientIp, _, er := rtsplayer.GetIpPort(clientAddress)
+		if nil != er {
+			err = er
+			return
+		}
+		clientPorts := strings.Split(clientPort, "-")
+		if len(clientPorts) != 2 {
+			err = errors.New("invalid rtp receive port range value")
+			return
+		}
+		filter = fmt.Sprintf("(tcp && src host %v && src port %v) || (tcp && dst host %v && dst port %v) || (udp && dst %v && portrange %v-%v)",
+			serverIp, rtspPort, serverIp, rtspPort, clientIp, clientPorts[0], clientPorts[1])
+		return
+	} else {
+		err = errors.New("invalid RTSP protocol type")
+		return
+	}
+}
+
+func open(fileName string, transfer rtsplayer.TransferType, serverAddress, clientAddress, clientPort string, startTime time.Time) (dmx *RtspDemuxer, err error) {
+	// Open up the pcap file for reading
+	handle, err := pcap.OpenOffline(fileName)
+	if err != nil {
+		return nil, err
+	}
+
+	// // set BPF filter
+	// bpfFilter, err := getBPFFilter(transfer, serverAddress, clientAddress, clientPort)
+	// if nil != err {
+	// 	return nil, err
+	// }
+
+	// err = handle.SetBPFFilter(bpfFilter)
+	// if nil != err {
+	// 	return nil, err
+	// }
+
+	dmx = &RtspDemuxer{}
+	dmx.packetSource = gopacket.NewPacketSource(handle, handle.LinkType())
+	if nil == dmx {
+		return nil, errors.New("failed to create packet source")
+	}
+
+	dmx.handle = handle
+	dmx.firstRtspPacketTime = startTime
+	fmt.Println("firstRtspPacketTime:", startTime.String())
+	// dmx.firstRtspPacketTime = ctx.FirstRtspPacketTime
 
 	return dmx, nil
 }
@@ -62,6 +139,7 @@ func (dmx *RtspDemuxer) Close() {
 func (dmx *RtspDemuxer) ReadPacket() (*util.BytePacket, error) {
 	// Loop through packets in file
 	// ignore channel, ssrc id. just pass through stream server to client to emulate RTSP stream
+	rtpReassemble := false
 	for {
 		packet, err := dmx.packetSource.NextPacket()
 		if nil != err {
@@ -113,26 +191,27 @@ func (dmx *RtspDemuxer) ReadPacket() (*util.BytePacket, error) {
 			continue
 		}
 
-		// fmt.Println("data:", payload[0])
+		ssrc := uint32(0)
+		if !rtpReassemble {
+			interleavedPacket := rtsplayer.NewRtspInterleavedFramePacket(payload)
+			if nil == interleavedPacket {
+				continue
+			}
 
-		interleavedPacket := rtsplayer.NewRtspInterleavedFramePacket(payload)
-		if nil == interleavedPacket {
-			continue
+			interleavedLayer := interleavedPacket.Layer(util.LayerType_RtspInterleavedFrame)
+			if nil == interleavedLayer {
+				continue
+			}
+
+			rtpLayer := interleavedPacket.Layer(util.LayerType_Rtp)
+			fmt.Println(rtpLayer)
+			if nil == rtpLayer {
+				continue
+			}
+			ssrc = rtpLayer.(*rtplayer.RtpLayer).Header.SSRC
+		} else {
+
 		}
-
-		interleavedLayer := interleavedPacket.Layer(util.LayerType_RtspInterleavedFrame)
-		if nil == interleavedLayer {
-			continue
-		}
-
-		rtpLayer := interleavedPacket.Layer(util.LayerType_Rtp)
-		fmt.Println(rtpLayer)
-		if nil == rtpLayer {
-			continue
-		}
-
-		// timestamp := rtpLayer.(*rtplayer.RtpLayer).Header.Timestamp
-		ssrc := rtpLayer.(*rtplayer.RtpLayer).Header.SSRC
 
 		bp := util.BytePacket{
 			Payload: payload,
