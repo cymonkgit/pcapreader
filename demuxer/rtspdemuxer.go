@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cymonkgit/pcapreader/rtplayer"
 	"github.com/cymonkgit/pcapreader/rtsplayer"
 	"github.com/cymonkgit/pcapreader/util"
 	"github.com/google/gopacket"
@@ -105,16 +104,16 @@ func open(fileName string, transfer rtsplayer.TransferType, serverAddress, clien
 		return nil, err
 	}
 
-	// // set BPF filter
-	// bpfFilter, err := getBPFFilter(transfer, serverAddress, clientAddress, clientPort)
-	// if nil != err {
-	// 	return nil, err
-	// }
+	// set BPF filter
+	bpfFilter, err := getBPFFilter(transfer, serverAddress, clientAddress, clientPort)
+	if nil != err {
+		return nil, err
+	}
 
-	// err = handle.SetBPFFilter(bpfFilter)
-	// if nil != err {
-	// 	return nil, err
-	// }
+	err = handle.SetBPFFilter(bpfFilter)
+	if nil != err {
+		return nil, err
+	}
 
 	dmx = &RtspDemuxer{}
 	dmx.packetSource = gopacket.NewPacketSource(handle, handle.LinkType())
@@ -140,6 +139,7 @@ func (dmx *RtspDemuxer) ReadPacket() (*util.BytePacket, error) {
 	// Loop through packets in file
 	// ignore channel, ssrc id. just pass through stream server to client to emulate RTSP stream
 	rtpReassemble := false
+	var remains []byte
 	for {
 		packet, err := dmx.packetSource.NextPacket()
 		if nil != err {
@@ -191,32 +191,74 @@ func (dmx *RtspDemuxer) ReadPacket() (*util.BytePacket, error) {
 			continue
 		}
 
-		ssrc := uint32(0)
-		if !rtpReassemble {
-			interleavedPacket := rtsplayer.NewRtspInterleavedFramePacket(payload)
-			if nil == interleavedPacket {
-				continue
-			}
-
-			interleavedLayer := interleavedPacket.Layer(util.LayerType_RtspInterleavedFrame)
-			if nil == interleavedLayer {
-				continue
-			}
-
-			rtpLayer := interleavedPacket.Layer(util.LayerType_Rtp)
-			fmt.Println(rtpLayer)
-			if nil == rtpLayer {
-				continue
-			}
-			ssrc = rtpLayer.(*rtplayer.RtpLayer).Header.SSRC
+		var payload2 []byte
+		if rtpReassemble {
+			payload2 = append(remains, payload...)
 		} else {
+			payload2 = payload
+		}
 
+		interleavedPacket := rtsplayer.NewRtspInterleavedFramePacket(payload2)
+		if nil == interleavedPacket {
+			remains = nil
+			continue
+		}
+
+		interleavedLayer := interleavedPacket.Layer(util.LayerType_RtspInterleavedFrame)
+		if nil == interleavedLayer {
+			remains = nil
+			continue
+		}
+
+		il := interleavedLayer.(*rtsplayer.RtspInterleavedFrameLayer)
+		Len := il.Length
+
+		if Len >= uint16(len(payload2)) {
+			bp := util.BytePacket{
+				Payload: payload,
+				Time:    packetTimestamp,
+			}
+
+			return &bp, nil
+		}
+
+		packetOk := true
+		payload2 = payload[Len:]
+
+		for {
+			if payload2[0] != '$' {
+				break
+			}
+
+			Len = util.Beu16(payload2[2:]) + 4
+
+			if Len > uint16(len(payload2)) {
+				rtpReassemble = true
+				remains = payload2
+				break
+			} else {
+				rtpLayer := interleavedPacket.Layer(util.LayerType_Rtp)
+				// fmt.Println(rtpLayer)
+				if nil == rtpLayer {
+					continue
+				}
+				packetOk = true
+			}
+
+			if Len >= uint16(len(payload2)) {
+				break
+			} else {
+				payload2 = payload[Len:]
+			}
+		}
+
+		if !packetOk {
+			continue
 		}
 
 		bp := util.BytePacket{
 			Payload: payload,
 			Time:    packetTimestamp,
-			SSRC:    ssrc,
 		}
 
 		return &bp, nil

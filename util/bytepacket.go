@@ -9,7 +9,6 @@ import (
 type BytePacket struct {
 	Payload []byte
 	Time    time.Time
-	SSRC    uint32
 }
 
 // interleaved packet queue

@@ -21,9 +21,10 @@ func init() {
 }
 
 type RtpLayer struct {
-	Header rtp.RtpHeader
-	header []byte
-	body   []byte
+	Header  rtp.RtpHeader
+	header  []byte
+	body    []byte
+	trailer []byte
 }
 
 // LayerType함수. gopacket.Layer interface의 implementation. 패킷의 LayerType을 반환
@@ -33,7 +34,7 @@ func (l RtpLayer) LayerType() gopacket.LayerType {
 
 // LayerType함수. gopacket.Layer interface의 implementation. 패킷의 전체 byte 데이터를 반환.
 func (l RtpLayer) LayerContents() []byte {
-	return l.body
+	return append(l.header, l.body...)
 }
 
 // LayerPayload함수. gopacket.Layer interface의 implementation. 패킷 payload byte 데이터를 반환.
@@ -42,6 +43,13 @@ func (l RtpLayer) LayerPayload() []byte {
 }
 
 func (l RtpLayer) NextLayerType() gopacket.LayerType {
+	// if len(data) < 4 {
+	// 	return nil
+	// }
+
+	// if data[0] != '$' {
+	// 	return nil
+	// }
 	return gopacket.LayerTypePayload
 }
 

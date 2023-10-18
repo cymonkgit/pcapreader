@@ -240,11 +240,6 @@ func (l RtspRequestLayer) LayerPayload() []byte {
 	return l.rtspBody
 }
 
-// RestOfData function implements gopacket.Layer.RestOfData() interface function
-func (l RtspRequestLayer) RestOfData() []byte {
-	return nil
-}
-
 // RestOfData function retrieves message value of specific message type
 func (l RtspRequestLayer) GetMessageValueByType(msgType int) string {
 	for k := range l.Messages {

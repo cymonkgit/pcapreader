@@ -73,11 +73,6 @@ func (l SessionLayer) LayerContents() []byte {
 
 // LayerPayload function implements gopacket.Layer.LayerPayload() interface function
 func (l SessionLayer) LayerPayload() []byte {
-	return l.body
-}
-
-// RestOfData function implements gopacket.Layer.RestOfData() interface function
-func (l SessionLayer) RestOfData() []byte {
 	return nil
 }
 
