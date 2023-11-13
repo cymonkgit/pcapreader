@@ -1,4 +1,4 @@
-package rtplayer
+package rtp
 
 import (
 	"errors"

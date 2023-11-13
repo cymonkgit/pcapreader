@@ -1,5 +1,5 @@
 // package rtsplayer is RTSP parser layer for gopacket
-package rtsplayer
+package rtsp
 
 import (
 	"errors"

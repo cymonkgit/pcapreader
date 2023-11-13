@@ -1,10 +1,10 @@
-package rtsplayer
+package rtsp
 
 import (
 	"errors"
 
+	rtplayer "github.com/cymonkgit/pcapreader/layers/rtp"
 	"github.com/cymonkgit/pcapreader/rtp"
-	"github.com/cymonkgit/pcapreader/rtplayer"
 	"github.com/cymonkgit/pcapreader/util"
 	"github.com/google/gopacket"
 )

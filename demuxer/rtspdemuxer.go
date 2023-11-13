@@ -6,7 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cymonkgit/pcapreader/rtsplayer"
+	rtplayer "github.com/cymonkgit/pcapreader/layers/rtp"
+	rtsplayer "github.com/cymonkgit/pcapreader/layers/rtsp"
 	"github.com/cymonkgit/pcapreader/util"
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
@@ -21,6 +22,8 @@ type RtspDemuxer struct {
 	firstRtspPacketTime time.Time
 
 	firstRtspTimestamp uint32
+	lastRtspPacketTime time.Time
+	lastTcpSeq         uint32
 }
 
 func Open(fileName string, ctx *rtsplayer.RtspContext) (dmx *RtspDemuxer, err error) {
@@ -135,11 +138,18 @@ func (dmx *RtspDemuxer) Close() {
 	}
 }
 
-func (dmx *RtspDemuxer) ReadPacket() (*util.BytePacket, error) {
+func printhex16(b []byte) {
+	fmt.Println("% X", b[:16])
+}
+
+func (dmx *RtspDemuxer) ReadPacket(remains *[]byte, idx int) (*util.BytePacket, error) {
 	// Loop through packets in file
 	// ignore channel, ssrc id. just pass through stream server to client to emulate RTSP stream
 	rtpReassemble := false
-	var remains []byte
+	if len(*remains) > 0 {
+		rtpReassemble = true
+	}
+
 	for {
 		packet, err := dmx.packetSource.NextPacket()
 		if nil != err {
@@ -147,6 +157,7 @@ func (dmx *RtspDemuxer) ReadPacket() (*util.BytePacket, error) {
 		}
 
 		packetTimestamp := packet.Metadata().CaptureInfo.Timestamp
+		captureLength := packet.Metadata().CaptureLength
 		if packetTimestamp.Before(dmx.firstRtspPacketTime) {
 			continue
 		}
@@ -185,6 +196,12 @@ func (dmx *RtspDemuxer) ReadPacket() (*util.BytePacket, error) {
 			continue
 		}
 
+		// skip tcp re-transmission
+		if dmx.lastTcpSeq != 0 && tcpPacket.Seq == dmx.lastTcpSeq {
+			continue
+		}
+		dmx.lastTcpSeq = tcpPacket.Seq
+
 		payload := tcpPacket.LayerPayload()
 		if nil == payload || len(payload) < 1 {
 			// return errors.New("has no payload")
@@ -193,48 +210,36 @@ func (dmx *RtspDemuxer) ReadPacket() (*util.BytePacket, error) {
 
 		var payload2 []byte
 		if rtpReassemble {
-			payload2 = append(remains, payload...)
+			payload2 = append(*remains, payload...)
+			*remains = nil
 		} else {
 			payload2 = payload
 		}
 
-		interleavedPacket := rtsplayer.NewRtspInterleavedFramePacket(payload2)
-		if nil == interleavedPacket {
-			remains = nil
-			continue
-		}
-
-		interleavedLayer := interleavedPacket.Layer(util.LayerType_RtspInterleavedFrame)
-		if nil == interleavedLayer {
-			remains = nil
-			continue
-		}
-
-		il := interleavedLayer.(*rtsplayer.RtspInterleavedFrameLayer)
-		Len := il.Length
-
-		if Len >= uint16(len(payload2)) {
-			bp := util.BytePacket{
-				Payload: payload,
-				Time:    packetTimestamp,
-			}
-
-			return &bp, nil
-		}
-
-		packetOk := true
-		payload2 = payload[Len:]
-
+		var ilfi []util.InterleavedPacketInfo
+		packetOk := false
 		for {
-			if payload2[0] != '$' {
+			interleavedPacket := rtsplayer.NewRtspInterleavedFramePacket(payload2)
+			if nil == interleavedPacket {
+				*remains = nil
 				break
 			}
 
-			Len = util.Beu16(payload2[2:]) + 4
+			interleavedLayer := interleavedPacket.Layer(util.LayerType_RtspInterleavedFrame)
+			if nil == interleavedLayer {
+				if len(payload) >= 4 && payload2[0] == 0x24 {
+					*remains = payload2
+				} else {
+					*remains = nil
+				}
+				break
+			}
 
+			il := interleavedLayer.(*rtsplayer.RtspInterleavedFrameLayer)
+			Len := il.Length + 4
 			if Len > uint16(len(payload2)) {
 				rtpReassemble = true
-				remains = payload2
+				*remains = payload2
 				break
 			} else {
 				rtpLayer := interleavedPacket.Layer(util.LayerType_Rtp)
@@ -242,23 +247,45 @@ func (dmx *RtspDemuxer) ReadPacket() (*util.BytePacket, error) {
 				if nil == rtpLayer {
 					continue
 				}
+
+				rl := rtpLayer.(*rtplayer.RtpLayer)
+
 				packetOk = true
+				if nil == ilfi {
+					ilfi = make([]util.InterleavedPacketInfo, 0)
+				}
+				ilfi = append(ilfi, util.InterleavedPacketInfo{
+					Len:       il.Length,
+					Marker:    rl.Header.Marker,
+					SeqNumber: int(rl.Header.SequenceNumber),
+					SSRC:      rl.Header.SSRC,
+					PT:        rl.Header.PayloadType,
+				})
 			}
 
 			if Len >= uint16(len(payload2)) {
 				break
 			} else {
-				payload2 = payload[Len:]
+				payload2 = payload2[Len:]
 			}
 		}
 
 		if !packetOk {
+			if !dmx.lastRtspPacketTime.IsZero() && dmx.lastRtspPacketTime.Add(time.Second*5).Before(packetTimestamp) {
+				// timeout
+				return nil, errors.New("timeout")
+			}
 			continue
 		}
 
+		dmx.lastRtspPacketTime = packetTimestamp
+
 		bp := util.BytePacket{
-			Payload: payload,
-			Time:    packetTimestamp,
+			Payload:       payload,
+			Time:          packetTimestamp,
+			CaptureLength: captureLength,
+			Reassembled:   rtpReassemble,
+			ILFI:          ilfi,
 		}
 
 		return &bp, nil

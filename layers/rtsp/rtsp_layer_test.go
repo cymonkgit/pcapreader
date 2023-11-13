@@ -1,4 +1,4 @@
-package rtsplayer
+package rtsp
 
 import (
 	"fmt"

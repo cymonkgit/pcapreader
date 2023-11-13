@@ -20,7 +20,7 @@ import (
 	"time"
 
 	"github.com/cymonkgit/pcapreader/demuxer"
-	"github.com/cymonkgit/pcapreader/rtsplayer"
+	rtsplayer "github.com/cymonkgit/pcapreader/layers/rtsp"
 	"github.com/cymonkgit/pcapreader/util"
 )
 
@@ -647,7 +647,7 @@ func readRequestWithTimeout(b *bufio.Reader, conn *net.Conn, duration time.Durat
 		}
 	}()
 
-	fmt.Println(s)
+	fmt.Println("**req:", s)
 	lines := make([]string, 1)
 	lines[0] = s
 
@@ -683,7 +683,7 @@ func newTextprotoReader(br *bufio.Reader) *textproto.Reader {
 func IsRtcpRequest(in []byte) (bool, int) {
 	if len(in) >= 4 {
 		if in[0] == 0x24 {
-			return true, int(binary.BigEndian.Uint16(in[2:]))
+			return true, int(binary.BigEndian.Uint16(in[2:]) + 4)
 		}
 	}
 	return false, 0
@@ -698,9 +698,10 @@ func demuxRoutine(filename string, session *RtspSession, rtspctx *rtsplayer.Rtsp
 
 	ctx, _ := context.WithCancel(session.ctx)
 
+	remains := make([]byte, 0)
 DEMUXLOOP:
 	for {
-		packet, err := dmx.ReadPacket()
+		packet, _, err := dmx.ReadPacket(&remains)
 		if nil != err {
 			return
 		}

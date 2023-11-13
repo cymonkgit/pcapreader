@@ -1,14 +1,32 @@
 package util
 
 import (
+	"fmt"
 	"sync"
 	"time"
 )
 
+// interleaved frame information
+type InterleavedPacketInfo struct {
+	Len       uint16
+	Marker    uint8
+	SeqNumber int
+	SSRC      uint32
+	PT        uint8
+}
+
+func (ri InterleavedPacketInfo) GetText() string {
+	// return fmt.Sprintf("Seq:%v, marker: %v, Payload: %v, SSRC:%v", ri.SeqNumber, ri.Marker, ri.PT, ri.SSRC)
+	return fmt.Sprintf("Seq:%v, marker: %v", ri.SeqNumber, ri.Marker)
+}
+
 // channel deliver data format
 type BytePacket struct {
-	Payload []byte
-	Time    time.Time
+	Payload       []byte
+	Time          time.Time
+	CaptureLength int
+	Reassembled   bool
+	ILFI          []InterleavedPacketInfo
 }
 
 // interleaved packet queue
