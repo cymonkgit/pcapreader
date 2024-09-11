@@ -699,9 +699,10 @@ func demuxRoutine(filename string, session *RtspSession, rtspctx *rtsplayer.Rtsp
 	ctx, _ := context.WithCancel(session.ctx)
 
 	remains := make([]byte, 0)
+	idx := 0
 DEMUXLOOP:
 	for {
-		packet, _, err := dmx.ReadPacket(&remains)
+		packet, err := dmx.ReadPacket(&remains, idx)
 		if nil != err {
 			return
 		}

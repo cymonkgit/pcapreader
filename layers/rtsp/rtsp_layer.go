@@ -480,7 +480,10 @@ func Probe(fileName string) (*RtspContextMap, error) {
 
 	// Loop through packets in file
 	packetSource := gopacket.NewPacketSource(handle, handle.LinkType())
+	packetNo := 0
 	for packet := range packetSource.Packets() {
+		packetNo++
+		fmt.Println("packet no:", packetNo)
 		ethLayer := packet.Layer(layers.LayerTypeEthernet)
 		if ethLayer == nil {
 			continue

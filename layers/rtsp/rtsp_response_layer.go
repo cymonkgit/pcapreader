@@ -228,6 +228,7 @@ func decodeRtspResponse(data []byte, p gopacket.PacketBuilder) error {
 }
 
 func parseResponse(data []byte) *RtspResponseLayer {
+	fmt.Println("datalen:", len(data))
 	indices := util.SplitByteIndices(data, "\r\n\r\n")
 
 	if len(indices) < 1 {
@@ -235,6 +236,7 @@ func parseResponse(data []byte) *RtspResponseLayer {
 	}
 
 	var body, trailer []byte
+
 	body = data[:indices[0]]
 	if len(indices) >= 2 {
 		trailer = data[indices[0]+4 : indices[1]]
